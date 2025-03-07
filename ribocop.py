@@ -386,23 +386,6 @@ def process_paf(sampleid, outputdir, log_file):
     result.to_csv(outputfile, sep='\t', index=False, header=False)
 
 
-def append_summary(stats, summary_file):
-    """Append desriptive statistics to common JSON file for comparison between samples"""
-    #Check if the file exists
-    if os.path.exists(summary_file):
-        with open(summary_file, "r") as f:
-            try:
-                data = json.load(f)  # Load existing JSON data
-            except json.JSONDecodeError:
-                data = []  # Handle corrupted/empty file
-    else:
-        data = []  # Start new list if file doesn't exist
-
-    data.append(stats)
-
-    # Write the updated JSON back to file
-    with open(summary_file, "w") as f:
-        json.dump(data, f, indent=2)
 
         
 def update_log(category, key, value, log_file):
@@ -422,7 +405,7 @@ def update_log(category, key, value, log_file):
 
 def main():
     """Main function."""   
-    parser = argparse.ArgumentParser(description="Script to process samples and manage output directories.")
+    parser = argparse.ArgumentParser(description="Identify and characterise rDNA units from FASTA input.")
     parser.add_argument('-o', '--output_dir', required=True, help='Output directory for results')
     parser.add_argument('-s', '--sampleid', required=True, help='Sample ID for output files')
     parser.add_argument('-l', '--rdnalib', required=True, help='rDNA library')
