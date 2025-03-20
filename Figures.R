@@ -345,6 +345,39 @@ p
 ggsave("zc4688/honours/ribocop/results/figures/barrnaptree_nolength.png", height = 20, width = 15)
 ggsave("zc4688/honours/ribocop/results/figures/barrnaptree_nolength.pdf", height = 20, width = 15)
 
+
+p <- ggtree(tree) %<+% tmp +
+  geom_tiplab(size=1) +
+  geom_tippoint(aes(color = group), size = 1.5) +
+  scale_color_manual(values = colours, name = "Taxonomic Group")
+
+test <- barrnapplot %>% select(label, `Unit length`, group) %>% rename("testgroup" = "group")
+p <- p  + new_scale_color() + geom_facet(
+  data = barrnapplot,
+  mapping = aes(x = Envstart, xend = Envend, color = Unit, alpha = as.numeric(Hmmpalign)),
+  geom = geom_segment,       # Horizontal bar chart
+  panel = "Unit Structure"
+)  + geom_facet(
+  data = test,
+  mapping = aes(x = `Unit length`/1000, fill = testgroup),
+  geom = geom_col,       # Horizontal bar chart
+  panel = "Unit length (Kb)",
+  width = 0.6 
+) +
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 40), "Tree")+labs(alpha = "% HMM Match") + scale_fill_manual(values = colours) + scale_alpha(range = c(0.1, 1))+
+  scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "Unit")+
+  guides(
+    color = guide_legend(order = 1),
+    fill = guide_none()) + coord_cartesian(clip = 'off')
+
+facet_widths(p, widths = c(3, 3, 1))
+
+
+ggsave("zc4688/honours/ribocop/results/figures/barrnaptree_lengths.png", height = 20, width = 15)
+ggsave("zc4688/honours/ribocop/results/figures/barrnaptree_lengths.pdf", height = 20, width = 15)
+
+
 ############################### Per group plots
 mammals <- barrnapplot %>% filter(group == "Mammalia")
 
@@ -413,6 +446,7 @@ p <- p + new_scale_color() + geom_facet(
     color = guide_legend(order = 1)) + coord_cartesian(clip = 'off')
 p
 ggsave("zc4688/honours/ribocop/results/figures/gaptree.png", height = 20, width = 15)
+
 
 
 ############################### Boxplots
@@ -571,3 +605,59 @@ metadata <- metadata %>%
   rename("rDNA contigs" = "Contigs", "Species" = "label")
 
 write.table(metadata, "zc4688/honours/ribocop/metadata.tsv", sep = "\t", quote = F, row.names = F)
+
+
+############################### 18S tree
+eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/chordata_filter2/morph_fasta/msa/eighteen_msa.txt.treefile")
+
+treenames <- as.data.frame(eighteentree$tip.label)
+
+treenames <- treenames %>% 
+  mutate(`Sample ID` = sub("^([^_]*_[^_]*)_.*$", "\\1", `eighteentree$tip.label`))
+
+treenames <- treenames %>% left_join(plotdata %>% select(`Sample ID`, label))
+
+eighteentree$tip.label <- as.character(treenames$label)
+eighteentree <- ape::drop.tip(eighteentree, setdiff(eighteentree$tip.label, common_organisms))
+eighteentree$edge.length <- NULL
+
+p <- ggtree(eighteentree) %<+% tmp +
+  geom_tiplab(size=1) +
+  geom_tippoint(aes(color = group), size = 1.5) +
+  scale_color_manual(values = colours, name = "Taxonomic Group")
+
+################################
+tree <- read.tree("/g/data/te53/zc4688/honours/ribocop/species (5).nwk") 
+
+treenames <- as.data.frame(tree$tip.label)
+colnames(treenames) <- c("Timetreename")
+replacementnames <- read.delim("zc4688/honours/ribocop/speciestimetree.tsv", header = T, sep = ",")
+
+replacementnames <- replacementnames %>% mutate(Species = str_replace_all(Species, " ", "_"), Timetreename = str_replace_all(Replacement, " ", "_") ) %>% select(-Replacement)
+
+treenames <- treenames %>% left_join(replacementnames) %>% mutate(Species = ifelse(is.na(Species), Timetreename, Species)) %>% select(Species)
+tree$tip.label <- as.character(treenames$Species)
+tree$edge.length <- NULL
+tree$tip.label <- str_replace_all(tree$tip.label, "_", " ")
+
+eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/chordata_filter2/morph_fasta/msa/eighteen_msa.txt.treefile")
+
+treenames <- as.data.frame(eighteentree$tip.label)
+
+treenames <- treenames %>% 
+  mutate(`Sample ID` = sub("^([^_]*_[^_]*)_.*$", "\\1", `eighteentree$tip.label`))
+
+treenames <- treenames %>% left_join(plotdata %>% select(`Sample ID`, label))
+
+eighteentree$tip.label <- as.character(treenames$label)
+eighteentree$edge.length <- NULL
+
+common_organisms <- intersect(eighteentree$tip.label, tree$tip.label)
+eighteentree <- ape::drop.tip(eighteentree, setdiff(eighteentree$tip.label, common_organisms))
+tree <- ape::drop.tip(tree, setdiff(tree$tip.label, common_organisms))
+A <- cbind(tree$tip.label, tree$tip.label)
+
+x$color <- colours[x$group]
+cophyloplot(tree, eighteentree, assoc = A, show.tip.label = F, space=500, col = x$color, type = "cladogram") 
+dist.topo(tree, eighteentree)
+
