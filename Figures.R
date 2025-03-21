@@ -6,7 +6,7 @@ library(GenomicRanges)
 library(taxize)
 library(RColorBrewer)
 ############################### Figure 1: length tree
-directory <- "/g/data/te53/zc4688/honours/ribocop/results/chordata_filter2"
+directory <- "/g/data/te53/zc4688/honours/ribocop/results/main"
 
 # List all JSON files in the directory
 json_files <- list.files(directory, pattern = "\\.json$", full.names = TRUE)
@@ -44,7 +44,7 @@ combined_df <- combined_df %>%
   filter(!is.na(`rDNA_details.Number of primary alignments`)) %>% 
   dplyr::select(`Sample_details.Sample ID`, `Sample_details.Species`, `Sample_details.TaxID`, 
                 `rDNA_details.Unit length`, `rDNA_details.Total length`, `rDNA_details.Number of contigs`,
-                `rDNA_details.Minimum unit length`, `rDNA_details.Maximum unit length`) %>% 
+                `rDNA_details.Minimum unit length`, `rDNA_details.Maximum unit length`, `rDNA_details.Number of morphs`) %>% 
   dplyr::rename(
     `Sample ID` = `Sample_details.Sample ID`,
     Species = `Sample_details.Species`,
@@ -202,7 +202,7 @@ ggsave("zc4688/honours/ribocop/results/figures/tree_current.pdf", height = 20, w
 
 
 ########################### Figure 2: Barrnap with edits (marked Palign for every unit)
-barrnap <- read.delim("zc4688/honours/ribocop/results/chordata_filter2/morph_fasta/barrnap_newpalign.gff", header = F)
+barrnap <- read.delim("zc4688/honours/ribocop/results/main/morph_fasta/barrnap_newpalign.gff", header = F)
 tree <- read.tree("/g/data/te53/zc4688/honours/ribocop/species (5).nwk") #ORIGINAL tree before filtering, just for checking. most current results are in refiltered directory (with current filtering), all has more because filtering was lest strict
 
 treenames <- as.data.frame(tree$tip.label)
@@ -453,7 +453,7 @@ ggsave("zc4688/honours/ribocop/results/figures/gaptree.png", height = 20, width 
 
 barnapboxplot <- test %>% 
   group_by(Sample, Unit) %>% 
-  filter((Envstart - Envend) == max(Envstart - Envend)) %>% 
+  filter((Envend - Envstart) == max(Envend - Envstart)) %>% 
   arrange(Sample, Unit, Envstart) %>% 
   slice_head(n = 1) %>% 
   ungroup() %>% 
@@ -608,7 +608,7 @@ write.table(metadata, "zc4688/honours/ribocop/metadata.tsv", sep = "\t", quote =
 
 
 ############################### 18S tree
-eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/chordata_filter2/morph_fasta/msa/eighteen_msa.txt.treefile")
+eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/main/morph_fasta/msa/eighteen_msa.txt.treefile")
 
 treenames <- as.data.frame(eighteentree$tip.label)
 
@@ -618,10 +618,15 @@ treenames <- treenames %>%
 treenames <- treenames %>% left_join(plotdata %>% select(`Sample ID`, label))
 
 eighteentree$tip.label <- as.character(treenames$label)
+common_organisms <- intersect(plotdata$label, eighteentree$tip.label)
+
 eighteentree <- ape::drop.tip(eighteentree, setdiff(eighteentree$tip.label, common_organisms))
 eighteentree$edge.length <- NULL
+eighteentree$tip.label <- str_replace_all(tree$tip.label, "_", " ")
 
-p <- ggtree(eighteentree) %<+% tmp +
+
+
+ggtree(eighteentree) %<+% tmp +
   geom_tiplab(size=1) +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group")
@@ -640,9 +645,10 @@ tree$tip.label <- as.character(treenames$Species)
 tree$edge.length <- NULL
 tree$tip.label <- str_replace_all(tree$tip.label, "_", " ")
 
-eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/chordata_filter2/morph_fasta/msa/eighteen_msa.txt.treefile")
+eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/main/morph_fasta/msa/twoeight_filtered_msa.txt.bionj")
 
 treenames <- as.data.frame(eighteentree$tip.label)
+
 
 treenames <- treenames %>% 
   mutate(`Sample ID` = sub("^([^_]*_[^_]*)_.*$", "\\1", `eighteentree$tip.label`))
@@ -652,12 +658,55 @@ treenames <- treenames %>% left_join(plotdata %>% select(`Sample ID`, label))
 eighteentree$tip.label <- as.character(treenames$label)
 eighteentree$edge.length <- NULL
 
+eighteentree$tip.label <- str_replace_all(tree$tip.label, "_", " ")
+
+
 common_organisms <- intersect(eighteentree$tip.label, tree$tip.label)
+
 eighteentree <- ape::drop.tip(eighteentree, setdiff(eighteentree$tip.label, common_organisms))
 tree <- ape::drop.tip(tree, setdiff(tree$tip.label, common_organisms))
 A <- cbind(tree$tip.label, tree$tip.label)
 
 x$color <- colours[x$group]
-cophyloplot(tree, eighteentree, assoc = A, show.tip.label = F, space=500, col = x$color, type = "cladogram") 
 dist.topo(tree, eighteentree)
+
+
+ #cophyloplot(tree, eighteentree, assoc = A, show.tip.label = F, space=500, col = x$color, type = "cladogram") 
+
+
+
+###########################Related genes
+server <- "https://rest.ensembl.org"
+ext <- "/homology/symbol/human/"
+type <- "?type=orthologues"
+gene_ids <- c("FBL", "NOB1")
+
+data_list <- list()
+
+for (gene in gene_ids){
+  r <- GET(paste(server, ext, gene, type, sep = ""), content_type("application/json"))
+
+  orthologues <- content(r)
+  tmp <- orthologues$data[[1]]$homologies
+
+  tmp <- do.call(rbind, lapply(tmp, function(homology) {
+    data.frame(
+      species = homology$species,
+      protein_id = homology$protein_id,
+      id = homology$id,
+      type = homology$type
+    )
+  }))
+  
+  tmp <- tmp %>% mutate(humangene = gene)
+  
+  data_list[[gene]] <- tmp
+  
+}
+
+tmp <- bind_rows(data_list)
+
+tmp$species <- str_replace_all(tmp$species, "_", " ")
+
+common_organisms <- intersect(tolower(tmp$species), tolower(plotdata$label))
 
