@@ -1,3 +1,4 @@
+.libPaths(c("/g/data/if89/apps/Rlib/4.3.1/", .libPaths()))
 library(ggtree)
 library(tidyverse)
 library(ape)
@@ -5,8 +6,9 @@ library(jsonlite)
 library(GenomicRanges)
 library(taxize)
 library(RColorBrewer)
+library(ggnewscale)
 ############################### Figure 1: length tree
-directory <- "/g/data/te53/zc4688/honours/ribocop/results/main"
+directory <- "/g/data/te53/zc4688/honours/ribocop/results/new"
 
 # List all JSON files in the directory
 json_files <- list.files(directory, pattern = "\\.json$", full.names = TRUE)
@@ -38,9 +40,12 @@ for (file in json_files) {
 
 # Combine all data frames into one large data frame
 combined_df <- bind_rows(data_list)
+new <- bind_rows(data_list)
+tmp <- combined_df
+
 
 combined_df <- combined_df %>% 
-  filter(is.na(`Errors.rDNA identification`) & is.na(`Errors.Morph identification`)) %>% 
+  filter(is.na(`Errors.Alignment filtering`) & is.na(`Errors.Morph identification`) & is.na(`Errors.Non-ambiguous morph identification`)) %>% 
   filter(!is.na(`rDNA_details.Number of primary alignments`)) %>% 
   dplyr::select(`Sample_details.Sample ID`, `Sample_details.Species`, `Sample_details.TaxID`, 
                 `rDNA_details.Unit length`, `rDNA_details.Total length`, `rDNA_details.Number of contigs`,
@@ -87,7 +92,7 @@ plotdata <- lengths %>% select(Species, `Unit length`, `CN`, `Total length`, `Mi
 
 
 plotdata <- plotdata %>% 
-  rename("label" = "Species")
+  dplyr::rename("label" = "Species")
 
 metadata <- plotdata
 tree$tip.label <- str_replace_all(tree$tip.label, "'", "")
@@ -134,7 +139,7 @@ plotdata <- plotdata %>%
   mutate(
     class = case_when(
       label %in% c("Arripis georgianus", "Cyprinodon nevadensis mionectes", "Gymnocypris eckloni scoliostomus", "Distoechodon macrophthalmus",
-                   "Pempheris klunzingeri") ~ "Actinopteri",
+                   "Pempheris klunzingeri", "Neosynchiropus ocellatus") ~ "Actinopteri",
       label %in% c("Bubalus carabanensis", "Canis lupus dingo", "Diceros bicornis minor", "Elephas maximus indicus", 
                    "Hippopotamus amphibius kiboko", "Lagenorhynchus acutus", "Ovis ammon polii", 
                    "Perognathus longimembris pacificus", "Gorilla gorilla gorilla", "Glossophaga mutica", "Molossus nigricans",
@@ -145,7 +150,7 @@ plotdata <- plotdata %>%
       TRUE ~ class  # Keep existing values if no match
     ),
     order = case_when(
-      label %in% c("Chrysemys picta bellii", "Malaclemys terrapin pileata", "Macrochelys suwanniensis") ~ "Testudines",
+      label %in% c("Chrysemys picta bellii", "Malaclemys terrapin pileata", "Macrochelys suwanniensis", "Mauremys mutica") ~ "Testudines",
       label %in% c("Latimeria chalumnae") ~ "Coelacanthiformes",
       TRUE ~ order  # Keep existing values if no match
     ),
@@ -202,7 +207,61 @@ ggsave("zc4688/honours/ribocop/results/figures/tree_current.pdf", height = 20, w
 
 
 ########################### Figure 2: Barrnap with edits (marked Palign for every unit)
-barrnap <- read.delim("zc4688/honours/ribocop/results/main/morph_fasta/barrnap_newpalign.gff", header = F)
+structure_files <- list.files(directory, pattern = "\\.structure.tsv$", full.names = TRUE)
+
+# Initialize an empty list to store the data frames
+data_list <- list()
+
+# Loop through each file and read the JSON into a data frame
+for (file in structure_files) {
+  data <- read.delim(file, header = TRUE, sep="\t")
+  samplename <- str_replace(basename(file), ".refmorph.structure.tsv", "")
+  data <- data %>% 
+    select(Type, HMMbegin, HMMend, Envstart, Envend, `X..HMM`, `Target.length`, Strand) %>% 
+    mutate(`Sample ID` = samplename) 
+  data_list[[file]] <- data
+}
+
+barrnap <- bind_rows(data_list)
+
+# Get a list of all FASTA files in the directory
+fasta_files <- list.files(directory, pattern = "\\.rDNA.refmorph.fasta$", full.names = TRUE)
+
+# Initialize an empty list to store the sequence names from all files
+all_sequence_names <- list()
+
+# Loop through each FASTA file and extract sequence names
+for (file in fasta_files) {
+  samplename <- str_replace(basename(file), ".rDNA.refmorph.fasta", "")
+  # Read the sequence names from the current file
+  sequence_names <- grep("^>", readLines(file), value = TRUE)
+  
+  # Remove the '>' character from the sequence names
+  sequence_names <- sub("^>", "", sequence_names)
+  
+  data <- data_frame(`Sample ID` = samplename, refmorph = sequence_names)
+  
+  # Add the sequence names to the list, with the filename as the key
+  all_sequence_names[[file]] <- data
+}
+
+refmorphs <- bind_rows(all_sequence_names)
+
+barrnap <- barrnap %>% left_join(refmorphs) 
+
+barrnap <- barrnap %>% 
+  mutate(morphstart = as.numeric(str_replace_all(str_extract(refmorph, "(:\\d*)"), ":", "")),
+         morphend = as.numeric(str_replace_all(str_extract(refmorph, "(-\\d*)"), "-", "")))
+
+barrnap <- barrnap %>%  left_join(lengths) 
+
+
+barrnap <- barrnap %>% 
+  mutate(Start = ifelse(Strand == "+", Envstart - morphstart, morphend - Envend),
+         End = ifelse(Strand == "+", Envend - morphstart, morphend - Envstart) )
+
+
+
 tree <- read.tree("/g/data/te53/zc4688/honours/ribocop/species (5).nwk") #ORIGINAL tree before filtering, just for checking. most current results are in refiltered directory (with current filtering), all has more because filtering was lest strict
 
 treenames <- as.data.frame(tree$tip.label)
@@ -214,31 +273,57 @@ replacementnames <- replacementnames %>% mutate(Species = str_replace_all(Specie
 treenames <- treenames %>% left_join(replacementnames) %>% mutate(Species = ifelse(is.na(Species), Timetreename, Species)) %>% select(Species)
 tree$tip.label <- as.character(treenames$Species)
 
-colnames(barrnap) <- c("Sample", "Version", "Start", "End", "Envstart", "Envend", "Hmmstart", "Hmmend", "Score", "Bitscore", "Hmmpalign", "Targetpalign", "Strand", "Other", "Product")
-
-barrnap <- barrnap %>% 
-  filter(!is.na(Start)) %>% 
-  separate(Product, into = c("Name", "Other", "Note"), sep = ";") %>% 
-  separate(Name, into = c("Name", "Unit"), sep = "=") %>% 
-  #separate(Other, into = c("Other", "Completeness"), sep = "\\(") %>% 
-  # separate(Note, into = c("Note", "Palign"), sep = "=") %>% 
-  #mutate(Completeness = str_replace_all(Completeness, "\\)", "")) %>% 
-  select(-Note, -Name, -Other, -Version, -Strand) %>% 
-  mutate(`Sample ID` = sub("^([^_]*_[^_]*)_.*$", "\\1", Sample)) %>% 
-  left_join(lengths) 
 
 
-barrnap <- barrnap %>% group_by(Species) %>%
+
+barrnap <- barrnap %>% group_by(Species) %>% arrange(`Sample ID`) %>% 
   filter(`Sample ID` == last(`Sample ID`)) %>%
   ungroup()
 
 barrnap <- barrnap %>% 
-  rename("label" = "Species")
+  dplyr::rename("label" = "Species") %>% 
+  dplyr::rename("Hmmpalign" = "X..HMM")
 
 barrnapplot <- barrnap %>% relocate(label, .before = everything())
+################################################################################
+
+msadf <- barrnapplot %>% 
+  group_by(`Sample ID`, Type) %>% 
+  filter((End - Start) == max(End - Start)) %>% 
+  arrange(`Sample ID`, Type, Start) %>% 
+  slice_head(n = 1) %>% 
+  ungroup() %>% 
+  select(`Sample ID`, Type, Start, End, refmorph) %>% 
+  mutate(length = End - Start, 
+         name = paste(`Sample ID`, refmorph, sep = "_"))
+
+
+
+eighteen <- msadf %>% filter(Type == "18S_rRNA")
+eighteen <- eighteen %>% 
+  mutate(outside = length > (mean(eighteen$length) + 3*sd(eighteen$length)) | 
+           length < (mean(eighteen$length) - 3*sd(eighteen$length)))  %>% 
+  filter(outside == FALSE) %>% 
+  select(name, Start, End)
+write.table(eighteen, "zc4688/honours/ribocop/results/new/msa/eighteen.tsv", sep = ",", quote = F, row.names = F, col.names = F)
+twoeight <- msadf %>% filter(Type == "28S_rRNA")
+twoeight <- twoeight %>% 
+  mutate(outside = length > (mean(twoeight$length) + 3*sd(twoeight$length)) | 
+           length < (mean(twoeight$length) - 3*sd(twoeight$length)))%>% 
+  filter(outside == FALSE)
+write.table(twoeight, "zc4688/honours/ribocop/results/new/msa/twoeight.tsv", sep = ",", quote = F, row.names = F, col.names = F)
+
+
+fiveeight <- msadf %>% filter(Type == "5_8S_rRNA")
+fiveeight <- fiveeight %>% 
+  mutate(outside = length > (mean(fiveeight$length) + 3*sd(fiveeight$length)) | 
+           length < (mean(fiveeight$length) - 3*sd(fiveeight$length)))%>% 
+  filter(outside == FALSE)
+write.table(fiveeight, "zc4688/honours/ribocop/results/new/msa/fiveeight.tsv", sep = ",", quote = F, row.names = F, col.names = F)
+
 
 barrnapmetadata <- barrnapplot %>% 
-  group_by(Unit, label, `Sample ID`) %>% 
+  group_by(Type, label, `Sample ID`) %>% 
   mutate(Hmmpalign = ifelse(Hmmpalign > 1, 1, Hmmpalign)) %>% 
   mutate(Hmmpalign = round(Hmmpalign, digits = 2)) %>% 
   filter(Hmmpalign == max((Hmmpalign))) %>% 
@@ -256,6 +341,8 @@ barrnapmetadata <- barrnapplot %>%
          `28S_length` = `28S_rRNA_Envend` - `28S_rRNA_Envstart`,
          `IGS_length` = `Unit length` - `28S_rRNA_Envend`) %>% 
   select(ITS1, ITS2, `18S_length`, `28S_length`, `IGS_length`, label, `Unit length`, `Sample ID`)
+
+################################################################################
 
 common_organisms <- intersect(barrnapplot$label, tree$tip.label)
 
@@ -292,24 +379,20 @@ p <- ggtree(tree) %<+% tmp +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group")
 
-p <- p + new_scale_color() + geom_facet(
+p <- p + geom_facet(
   data = barrnapplot,
-  mapping = aes(x = Envstart, xend = Envend, color = Unit, alpha = as.numeric(Hmmpalign)),
+  mapping = aes(x = 0, xend = ifelse(`Unit length` < 35000, `Unit length`, 35000)),
+  geom = geom_segment,       # Horizontal bar chart
+  panel = " ",
+  color = "grey50",
+  alpha = 0.3
+) +
+  new_scale_color() + geom_facet(
+  data = barrnapplot,
+  mapping = aes(x = Start, xend = End, color = Type, alpha = as.numeric(Hmmpalign)),
   geom = geom_segment,       # Horizontal bar chart
   panel = " "
-)  +  geom_facet(
-  data = barrnapplot %>% filter(`Unit length` < 35000),
-  mapping = aes(x = `Unit length`, xend = `Unit length` + 50),
-  geom = geom_segment,       # Horizontal bar chart
-  panel = " ",
-  color = "black"
-) +  geom_facet(
-  data = barrnapplot %>% filter(`Unit length` >= 35000),
-  mapping = aes(x = 35000, xend = 35050),
-  geom = geom_segment,       # Horizontal bar chart
-  panel = " ",
-  color = "black"
-)+
+)  +
   scale_y_discrete() +  
   theme_tree2() + xlim_expand(c(0, 40), "Tree")+labs(alpha = "% HMM Match") + scale_alpha(range = c(0.1, 1))+
   scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "Unit")+
@@ -409,25 +492,7 @@ facet_widths(p, widths = c(3, 3, 1))
 ggsave("zc4688/honours/ribocop/results/figures/mammaltree.pdf", height = 10, width = 8)
 
 
-############################### Separate vs broken alignments
-test <- barrnapplot %>% 
-  arrange(Sample, Envstart) %>% 
-  group_by(label, Sample, Unit) %>% 
-  mutate(query_gap = Envstart - lag(Envend, default = first(Envstart)), 
-         ref_gap = Hmmstart - lag(Hmmend, default = first(Hmmstart)), 
-         diff = query_gap - ref_gap, 
-         type = case_when((ref_gap < -100 & query_gap > 100) | query_gap > 5000 ~ "separate",
-                          ref_gap == 0 & query_gap == 0 ~ "single", 
-                          TRUE ~ "gap")) %>% 
-  select(label, Sample, Unit, Envstart, Envend, type, `Unit length`, group) %>% 
-  mutate(
-    merged_Envstart = if_else(type == "gap", lag(Envstart, default = first(Envstart)), Envstart),
-    merged_Envend = Envend)  %>% 
-  filter(!lead(type, default = "none") == "gap") %>%
-  ungroup() %>% 
-  filter(Unit != "5S_rRNA") %>% 
-  mutate(Envstart = merged_Envstart,
-         Envend = merged_Envend)
+
 
 #inspect the merging
 p <- ggtree(tree) %<+% tmp +
@@ -451,22 +516,22 @@ ggsave("zc4688/honours/ribocop/results/figures/gaptree.png", height = 20, width 
 
 ############################### Boxplots
 
-barnapboxplot <- test %>% 
-  group_by(Sample, Unit) %>% 
-  filter((Envend - Envstart) == max(Envend - Envstart)) %>% 
-  arrange(Sample, Unit, Envstart) %>% 
+barnapboxplot <- barrnapplot %>% 
+  group_by(`Sample ID`, Type) %>% 
+  filter((End - Start) == max(Envend - Envstart)) %>% 
+  arrange(`Sample ID`, Type, Start) %>% 
   slice_head(n = 1) %>% 
   ungroup() %>% 
-  select(Sample, Unit, Envstart, Envend, group, `Unit length`) %>% pivot_wider(
-    names_from = Unit,
-    values_from = c(Envstart, Envend),
-    names_glue = "{Unit}_{.value}"
+  select(`Sample ID`, Type, Start, End, group, `Unit length`) %>% pivot_wider(
+    names_from = Type,
+    values_from = c(Start, End),
+    names_glue = "{Type}_{.value}"
   ) %>% 
-  mutate(ITS1 = `5_8S_rRNA_Envstart` - `18S_rRNA_Envend`,
-         `ITS2` = `28S_rRNA_Envstart` - `5_8S_rRNA_Envend`,
-         `18S_length` = `18S_rRNA_Envend` - `18S_rRNA_Envstart`,
-         `28S_length` = `28S_rRNA_Envend` - `28S_rRNA_Envstart`,
-         `IGS_length` = `Unit length` - `28S_rRNA_Envend`)
+  mutate(ITS1 = `5_8S_rRNA_Start` - `18S_rRNA_End`,
+         `ITS2` = `28S_rRNA_Start` - `5_8S_rRNA_End`,
+         `18S_length` = `18S_rRNA_End` - `18S_rRNA_Start`,
+         `28S_length` = `28S_rRNA_End` - `28S_rRNA_Start`,
+         `IGS_length` = `Unit length` - `28S_rRNA_End`)
 
 
 
@@ -606,9 +671,40 @@ metadata <- metadata %>%
 
 write.table(metadata, "zc4688/honours/ribocop/metadata.tsv", sep = "\t", quote = F, row.names = F)
 
+################################Conservation
+
+eighteen <- readDNAMultipleAlignment("zc4688/honours/ribocop/results/main/morph_fasta/msa/twoeight_filtered_msa.txt")
+
+shannon_entropy <- function(column) {
+  column <- column[column != "-"]
+  freqs <- table(column) / length(column)  # Frequency of each base
+  -sum(freqs * log2(freqs), na.rm = TRUE)  # Shannon entropy formula
+}
+
+# Convert alignment to matrix
+msa_matrix <- as.matrix(eighteen)
+
+# Apply function to each column
+entropy_values <- apply(msa_matrix, 2, shannon_entropy)
+
+human <- DNAStringSet(eighteen)["GCF_000001405_NC_000021.9:8392567-8436777:+:99-1967"]
+human <- strsplit(as.character(human), "")[[1]]
+
+tmp <- data.frame(Position = 1:length(entropy_values), Score = entropy_values, 
+                  Sequence = human)
+
+tmp <- tmp %>%
+  arrange(Position) %>%
+  mutate(Entropy_Smoothed = zoo::rollmean(Score, k = 10, fill = NA, align = "center"))
+
+ggplot(tmp %>% filter(Sequence != "-")) + geom_point(aes(x = Position, y = Score, color = Score), size = 0.5) + 
+  scale_color_gradient(low = "red", high = "green") + new_scale_colour() + 
+  geom_rug(aes(x = Position, y = 0, color = Sequence), size = 2, sides = "b") +
+  scale_color_manual(values = c("A" = "blue", "C" = "purple", "G" = "purple", "T" = "blue"))
+
 
 ############################### 18S tree
-eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/main/morph_fasta/msa/eighteen_msa.txt.treefile")
+eighteentree <- read.tree("/g/data/te53/zc4688/honours/ribocop/results/main/morph_fasta/msa/twoeight_msa.txt.treefile")
 
 treenames <- as.data.frame(eighteentree$tip.label)
 
