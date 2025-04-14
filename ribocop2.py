@@ -407,6 +407,7 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
 
     refseqid, refstart, refend, refstrand = re.match(r"(.*):(\d+)-(\d+):([-+])", refrdnamorph).groups()
     overlapping_rRNAs = []
+    overlapping_rRNAs_primary = []
 
     overlapping_rRNAs = filtered_data_df[
         (filtered_data_df["seqid"] == refseqid) &
@@ -414,9 +415,10 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
         (filtered_data_df["Envend"] <= int(refend))
     ]
 
+
     rRNA_file = f"{sampleid}.refmorph.structure.tsv"
     with open(rRNA_file, 'w') as f:
-        f.write("\t".join(filtered_data_df.columns) + "\n")
+        f.write("\t".join(filtered_data_df.columns))
         for _, row in overlapping_rRNAs.iterrows():
             f.write("\t".join([str(row[col]) for col in overlapping_rRNAs.columns]) + "\n")
 
@@ -524,6 +526,7 @@ def main():
     parser.add_argument('-x', '--txid', required=True, help='txID')
     parser.add_argument('-p', '--species', required=True, help='Species name')
     parser.add_argument('-i', '--input_dir', required=False, default=".", help="Input directory (default: current directory)")
+    parser.add_argument('-if', '--input_fasta', required=False, help="Full path to input FASTA file")
 
 
 
@@ -562,17 +565,27 @@ def main():
     with open(log_file, "w") as f:
         json.dump(sampleinfo, f, indent=2)
 
-    inputfasta = (
+    if args.input_fasta:
+        inputfasta = args.input_fasta
+        if not os.path.exists(inputfasta):
+            sys.exit(f"Error: Specified input FASTA file does not exist: {inputfasta}")
+    else:
+        fasta_candidates = (
         glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fna") + 
         glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fna.gz")+ 
-        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fa")
-    )[0]
+        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fa") + 
+        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fasta")
+        )
+        if not fasta_candidates:
+            sys.exit(f"Error: No FASTA file found matching sample ID {args.sampleid} in {args.input_dir}")
+
+        inputfasta = fasta_candidates[0]
     
     run_hmm(args.ncpus, args.sampleid, args.output_dir, inputfasta, log_file, args.hmmdb)
 
-    data_df = rna_builder(args.sampleid, inputfasta, args.output_dir, log_file)
+    filtered_data_df = rna_builder(args.sampleid, inputfasta, args.output_dir, log_file)
 
-    get_median_morph(args.sampleid, args.ncpus, inputfasta, log_file, data_df)
+    get_median_morph(args.sampleid, args.ncpus, inputfasta, log_file, filtered_data_df)
 
     process_paf(args.sampleid, args.output_dir, log_file)
 
