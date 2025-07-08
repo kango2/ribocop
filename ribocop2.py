@@ -11,15 +11,16 @@ import tarfile
 import json
 import glob
 import re
+import shutil
 
 
-def check_output(outputdir, sampleid):
+def check_output(output_dir, sampleid):
     """Check if output has already been generated for a given sample ID."""
-    checkpoint_file = os.path.join(outputdir, f"{sampleid}.ribocop")
+    checkpoint_file = os.path.join(output_dir, f"{sampleid}.ribocop")
     if os.path.exists(checkpoint_file + ".done"):
         print(f"Task already completed for {sampleid}. Exiting")
         sys.exit(0)
-    log_file = os.path.join(outputdir, f"{sampleid}_log.json")
+    log_file = os.path.join(output_dir, f"{sampleid}_log.json")
     if os.path.exists(log_file):
         with open(log_file, 'r') as f:
             content = json.load(f)
@@ -41,9 +42,9 @@ def modify_fasta(inputfasta, outputfasta, sampleid):
             SeqIO.write(record, outfile, "fasta")
         print(f"FASTA file modified for {sampleid}")
 
-def run_hmm(PBS_NCPUS, sampleid, outputdir, inputfasta, log_file, hmmdb):
+def run_hmm(PBS_NCPUS, sampleid, output_dir, inputfasta, log_file, hmmdb, tmp_dir, evalue):
     #Align the input fasta to HMM library using nhmmer.
-    PBS_JOBFS = os.environ.get('PBS_JOBFS')
+    
 
     LENG = {
     "5_8S_rRNA": 154, "18S_rRNA": 1831, "28S_rRNA": 3401,
@@ -52,41 +53,40 @@ def run_hmm(PBS_NCPUS, sampleid, outputdir, inputfasta, log_file, hmmdb):
     # Calculate MAXLEN
     MAXLEN = int(1.2 * max(LENG.values()))
 
-    evalue = 1E-6
 
-    tmpfasta = f"{PBS_JOBFS}/{sampleid}tmp.fa"
+    tmpfasta = f"{tmp_dir}/{sampleid}tmp.fa"
 
     if inputfasta.endswith('.gz'):
         #nhmmer requires input files to be rewindable for hmm files with multiple models (which ours has). Therefore gzipped files need to be ungzipped.
-        command = f"bgzip -@ {PBS_NCPUS} -d -k -c {inputfasta} > {PBS_JOBFS}/{sampleid}.fa"
+        command = f"bgzip -@ {PBS_NCPUS} -d -k -c {inputfasta} > {tmp_dir}/{sampleid}.fa"
         print(f"Running command: {command}")
         subprocess.run(command, check=True, shell=True)
         
 
 
-        modify_fasta(f"{PBS_JOBFS}/{sampleid}.fa", tmpfasta, sampleid)
-        os.remove(f"{PBS_JOBFS}/{sampleid}.fa")
+        modify_fasta(f"{tmp_dir}/{sampleid}.fa", tmpfasta, sampleid)
+        os.remove(f"{tmp_dir}/{sampleid}.fa")
         print(f"Removed ungzipped file for {sampleid}")
         
         #Run NHMMER
-        command = f"nhmmer --cpu {PBS_NCPUS} -E {evalue} --w_length {MAXLEN} -o /dev/null --tblout {sampleid}.primary.txt {hmmdb} {tmpfasta}"
+        command = f"nhmmer --cpu {PBS_NCPUS} -E {evalue} --w_length {MAXLEN} -o /dev/null --tblout {output_dir}/{sampleid}.primary.txt {hmmdb} {tmpfasta}"
         print(f"Running command: {command}")
         subprocess.run(command, check=True, shell=True)
         
 
         #remove temporary files to save space
-        os.remove(f"{PBS_JOBFS}/{sampleid}tmp.fa")
+        os.remove(f"{tmp_dir}/{sampleid}tmp.fa")
         print(f"Removed modified file for {sampleid}")
 
     else:
         modify_fasta(inputfasta, tmpfasta, sampleid)
-        command = f"nhmmer --cpu {PBS_NCPUS} -E {evalue} --w_length {MAXLEN} -o /dev/null --tblout {sampleid}.primary.txt {hmmdb} {tmpfasta}"
+        command = f"nhmmer --cpu {PBS_NCPUS} -E {evalue} --w_length {MAXLEN} -o /dev/null --tblout {output_dir}/{sampleid}.primary.txt {hmmdb} {tmpfasta}"
 
         print(f"Running command: {command}")
         
         # Execute barrnap command
         subprocess.run(command, check=True, shell=True)
-        os.remove(f"{PBS_JOBFS}/{sampleid}tmp.fa")
+        os.remove(f"{tmp_dir}/{sampleid}tmp.fa")
         print(f"Removed modified file for {sampleid}")
 
 
@@ -118,9 +118,9 @@ def read_hmm_output(hmm_output):
     
     return data_df
 
-def create_filtered_gff(sampleid, data_df):
+def create_filtered_gff(sampleid, data_df, output_dir):
     #Creates filtered gff file from filtered df. 
-    filtered_gff = f"{sampleid}.filtered.gff"
+    filtered_gff = f"{output_dir}/{sampleid}.filtered.gff"
 
     #Create filtered gff file
     data_gff = pd.DataFrame()
@@ -145,7 +145,7 @@ def create_filtered_gff(sampleid, data_df):
     print(f"GFF file saved to {filtered_gff}")
 
 
-def process_hmm_alignments(data_df, sampleid, log_file):
+def process_hmm_alignments(data_df, sampleid, log_file, output_dir):
     #Filters hmm alignments based on length. 
     LENG = {
     "5_8S_rRNA": 154, "18S_rRNA": 1831, "28S_rRNA": 3401,
@@ -211,7 +211,7 @@ def process_hmm_alignments(data_df, sampleid, log_file):
     update_log("rDNA_details", "Median HMM % match for filtered alignments", (filtered_data_df["% HMM"]).median(), log_file)
     update_log("rDNA_details", "Median length % match for filtered alignments", (filtered_data_df["% Target"]).median(), log_file)
 
-    create_filtered_gff(sampleid, filtered_data_df)
+    create_filtered_gff(sampleid, filtered_data_df, output_dir)
 
     return filtered_data_df
 
@@ -315,6 +315,7 @@ def morph_identification(filtered_data_df, log_file, sampleid):
         exit()
     else:
         morphs_df = pd.DataFrame(list(morphs), columns=['Query sequence name', 'Start', 'End', 'Strand'])
+        morphs_df["morph_number"] = [f"morph{i+1}" for i in range(len(morphs_df))]
         update_log("rDNA_details", "Number of morphs", len(morphs), log_file)
     return morphs_df
     # return morphs
@@ -331,10 +332,12 @@ def extract_sequences(fasta_file, morphs_df, output_dir, sampleid, log_file):
     valid_rows = []
 
     for _, row in morphs_df.iterrows():
+        morph_id = row["morph_number"]
         seq_id = row['Query sequence name']
         start = int(row['Start'])
         end = int(row['End'])
         strand = row['Strand']
+        
 
         if seq_id in sequences:
             sequence = sequences[seq_id].seq[start:end]
@@ -342,7 +345,7 @@ def extract_sequences(fasta_file, morphs_df, output_dir, sampleid, log_file):
                 sequence = sequence.reverse_complement()
             sequence_str = str(sequence)
             if 'N' not in sequence_str:
-                extracted_sequences.append((f"{seq_id}:{start}-{end}:{strand}", sequence_str))
+                extracted_sequences.append((f"{morph_id}.{seq_id}:{start}-{end}:{strand}", sequence_str))
                 valid_rows.append(row)
 
     if len(valid_rows)==0:
@@ -359,19 +362,19 @@ def extract_sequences(fasta_file, morphs_df, output_dir, sampleid, log_file):
         output_file = os.path.join(output_dir, sampleid + ".rDNA.morphs.tsv")
         valid_morphs_df.to_csv(output_file, sep='\t', index=False, header=False)
 
-def rna_builder(sampleid, inputfasta, outputdir, log_file):
-    primary_hmm = f"{sampleid}.primary.txt"
+def rna_builder(sampleid, inputfasta, output_dir, log_file):
+    primary_hmm = f"{output_dir}/{sampleid}.primary.txt"
 
     data_df = read_hmm_output(primary_hmm)
-    filtered_data_df = process_hmm_alignments(data_df, sampleid, log_file)
+    filtered_data_df = process_hmm_alignments(data_df, sampleid, log_file, output_dir)
     morphs_df = morph_identification(filtered_data_df, log_file, sampleid)
-    extract_sequences(inputfasta, morphs_df, outputdir, sampleid, log_file)
+    extract_sequences(inputfasta, morphs_df, output_dir, sampleid, log_file)
 
-    return filtered_data_df
+    return filtered_data_df, morphs_df
 
-def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df):
+def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df, output_dir, morphs_df):
     #Reads morph sequences and finds median length unit which is designated as the representative morph for the genome. Uses this to find unit length and reference unit structure. 
-    morph_fasta = f"{sampleid}.rDNA.morphs.fasta"
+    morph_fasta = f"{output_dir}/{sampleid}.rDNA.morphs.fasta"
 
     fai_file = f"{morph_fasta}.fai"
 
@@ -395,7 +398,7 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
     update_log("rDNA_details", "Minimum unit length", int(min_length), log_file)
     update_log("rDNA_details", "Maximum unit length", int(max_length), log_file)
 
-    command = f"samtools faidx {morph_fasta} {refrdnamorph} > {sampleid}.rDNA.refmorph.fasta"
+    command = f"samtools faidx {morph_fasta} {refrdnamorph} > {output_dir}/{sampleid}.rDNA.refmorph.fasta"
 
     print(f"Running command: {command}")
 
@@ -406,31 +409,93 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
     print(f"refrdnamorph: {refrdnamorph}")
 
     refseqid, refstart, refend, refstrand = re.match(r"(.*):(\d+)-(\d+):([-+])", refrdnamorph).groups()
-    overlapping_rRNAs = []
-    overlapping_rRNAs_primary = []
+    refstart=int(refstart)
+    refend=int(refend)
+    overlapping_ref = []
 
-    overlapping_rRNAs = filtered_data_df[
+    overlapping_ref = filtered_data_df[
         (filtered_data_df["seqid"] == refseqid) &
         (filtered_data_df["Envstart"] >= int(refstart)) &
         (filtered_data_df["Envend"] <= int(refend))
     ]
 
+    if refstrand == "+":
+        overlapping_ref["Start"] = overlapping_ref["Envstart"] - refstart
+        overlapping_ref["End"] = overlapping_ref["Envend"] - refstart
+    else:
+        overlapping_ref["Start"] = refend - overlapping_ref["Envend"] + 1
+        overlapping_ref["End"] = refend - overlapping_ref["Envstart"] + 1
+    
+    overlapping_ref = overlapping_ref[[
+            "Start", 
+            "End", 
+            "Type"
+        ]]
 
-    rRNA_file = f"{sampleid}.refmorph.structure.tsv"
+
+    rRNA_file = f"{output_dir}/{sampleid}.refmorph.structure.tsv"
     with open(rRNA_file, 'w') as f:
-        f.write("\t".join(filtered_data_df.columns))
-        for _, row in overlapping_rRNAs.iterrows():
-            f.write("\t".join([str(row[col]) for col in overlapping_rRNAs.columns]) + "\n")
+        f.write("Start" + "\t" + "End" + "\t" + "Type" + "\n")
+        for _, row in overlapping_ref.iterrows():
+            f.write("\t".join([str(row[col]) for col in overlapping_ref.columns]) + "\n")
+
+    #Overlaps in all morphs
+    all_overlaps = []
+
+    for _, morph_row in morphs_df.iterrows():
+        morph_id = morph_row["morph_number"]
+        seqid = morph_row["Query sequence name"]
+        start = int(morph_row["Start"])
+        end = int(morph_row["End"])
+        strand = morph_row["Strand"]
+
+        overlapping = filtered_data_df[
+            (filtered_data_df["seqid"] == seqid) &
+            (filtered_data_df["Envstart"] >= start) &
+            (filtered_data_df["Envend"] <= end)
+        ].copy()
+
+        if overlapping.empty:
+            continue
+
+    # Adjust rRNA coordinates relative to morph
+        if strand == "+":
+            overlapping["Start"] = overlapping["Envstart"] - start
+            overlapping["End"] = overlapping["Envend"] - start
+        else:
+            overlapping["Start"] = end - overlapping["Envend"] + 1
+            overlapping["End"] = end - overlapping["Envstart"] + 1
+
+        overlapping["morph_number"] = morph_id
+        
+        overlapping = overlapping[[
+            "morph_number",
+            "Start", 
+            "End", 
+            "Type"
+        ]]
+
+        all_overlaps.append(overlapping)
+        
+
+
+    if all_overlaps:
+        combined = pd.concat(all_overlaps, ignore_index=True)
+        output_path = os.path.join(output_dir, f"{sampleid}.structure.gff")
+        combined.to_csv(output_path, sep="\t", index=False)
+        print(f"Written morph structure file with {len(combined)} rRNAs from {len(morphs_df)} morphs.")
+    else:
+        print(f"No overlapping rRNAs found for any morph in sample {sampleid}")
 
     #Use refmorph to find rDNA arrays in input genome. 
-    command=f"minimap2 -t {PBS_NCPUS} --secondary=no -o {sampleid}.asm2refmorph.paf {sampleid}.rDNA.refmorph.fasta {inputfasta}"
-    print(f"Running command: {command}")
+    #command=f"minimap2 -t {PBS_NCPUS} --secondary=no -o {output_dir}/{sampleid}.asm2refmorph.paf {output_dir}/{sampleid}.rDNA.refmorph.fasta {inputfasta}"
+    #print(f"Running command: {command}")
 
-    subprocess.run(command, shell=True, check=True)
+    #subprocess.run(command, shell=True, check=True)
 
     
 
-def process_paf(sampleid, outputdir, log_file):
+def process_paf(sampleid, output_dir, log_file):
     #Process rDNA arrays to define final arrays in bed format. 
     column_names = [
         "Query sequence name", "Query sequence length", "Query start", "Query end", "Relative strand",
@@ -439,8 +504,8 @@ def process_paf(sampleid, outputdir, log_file):
     ]
 
     #Read in paf file as pandas df and set output file
-    data = pd.read_csv(f"{sampleid}.asm2refmorph.paf", sep='\t', usecols=list(range(0,12)), names=column_names)
-    outputfile = f"{sampleid}.rdnaregions.bed"
+    data = pd.read_csv(f"{output_dir}/{sampleid}.asm2refmorph.paf", sep='\t', usecols=list(range(0,12)), names=column_names)
+    outputfile = f"{output_dir}/{sampleid}.rdnaregions.bed"
 
     #Update log file
     update_log("rDNA_details", "Number of final alignments", int(data.shape[0]), log_file)
@@ -523,16 +588,18 @@ def main():
     parser.add_argument('-s', '--sampleid', required=True, help='Sample ID for output files')
     parser.add_argument('-l', '--hmmdb', required=True, help='Location of HMM db')
     parser.add_argument('-t', '--ncpus', required=True, help='Threads')
-    parser.add_argument('-x', '--txid', required=True, help='txID')
     parser.add_argument('-p', '--species', required=True, help='Species name')
     parser.add_argument('-i', '--input_dir', required=False, default=".", help="Input directory (default: current directory)")
     parser.add_argument('-if', '--input_fasta', required=False, help="Full path to input FASTA file")
-
-
+    parser.add_argument('-d', '--tmp_dir', required=False, help="Temporary directory for storing modified FASTA files (default:output directory)")
+    parser.add_argument('-e', '--e_value', required=False, default=1E-6, help="E value threshold for nhmmer")
 
     args = parser.parse_args()
 
-    
+
+
+    tmp_dir = args.tmp_dir if args.tmp_dir else args.output_dir
+
 #Create output directory if it does not exist.
     try:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -544,20 +611,12 @@ def main():
 #Check if output already exists
     check_output(args.output_dir, args.sampleid)
 
-    #Set wd to output directory
-    try:
-        os.chdir(args.output_dir)
-        print("WD changed successfully")
-    except Exception as e:
-        print(f"Error changing directory: {e}")
-        sys.exit(1)
 
     log_file = os.path.join(args.output_dir, f"{args.sampleid}_log.json")
 
     sampleinfo = {
         "Sample_details":{
         "Sample ID": args.sampleid,
-        "TaxID":args.txid,
         "Species":args.species
         }
     }
@@ -581,16 +640,13 @@ def main():
 
         inputfasta = fasta_candidates[0]
     
-    run_hmm(args.ncpus, args.sampleid, args.output_dir, inputfasta, log_file, args.hmmdb)
+    #run_hmm(args.ncpus, args.sampleid, args.output_dir, inputfasta, log_file, args.hmmdb, tmp_dir, args.e_value)
 
-    filtered_data_df = rna_builder(args.sampleid, inputfasta, args.output_dir, log_file)
+    filtered_data_df, morphs_df = rna_builder(args.sampleid, inputfasta, args.output_dir, log_file)
 
-    get_median_morph(args.sampleid, args.ncpus, inputfasta, log_file, filtered_data_df)
+    get_median_morph(args.sampleid, args.ncpus, inputfasta, log_file, filtered_data_df, args.output_dir, morphs_df)
 
     process_paf(args.sampleid, args.output_dir, log_file)
-
-
- 
 
     checkpoint_file = os.path.join(args.output_dir, f"{args.sampleid}.ribocop")
     
@@ -598,10 +654,6 @@ def main():
 
     os.remove(f"{checkpoint_file}.running")
 
-    files = [f for f in os.listdir() if f.startswith(f"{args.sampleid}")]
-    with tarfile.open(name=f"{args.sampleid}.tar.gz", mode="w:gz") as tar:
-        for file in files:
-            tar.add(file)
 
     print("Task completed. Exiting")
     
