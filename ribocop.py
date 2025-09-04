@@ -409,6 +409,10 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
     print(f"refrdnamorph: {refrdnamorph}")
 
     refseqid, refstart, refend, refstrand = re.match(r"(.*):(\d+)-(\d+):([-+])", refrdnamorph).groups()
+
+    refseqid = refseqid.split("morph")[-1] 
+    refseqid = refseqid.split(".", 1)[-1]
+
     refstart=int(refstart)
     refend=int(refend)
     overlapping_ref = []
@@ -426,18 +430,11 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
         overlapping_ref["Start"] = refend - overlapping_ref["Envend"] + 1
         overlapping_ref["End"] = refend - overlapping_ref["Envstart"] + 1
     
-    overlapping_ref = overlapping_ref[[
-            "Start", 
-            "End", 
-            "Type"
-        ]]
 
-
-    rRNA_file = f"{output_dir}/{sampleid}.refmorph.structure.tsv"
-    with open(rRNA_file, 'w') as f:
-        f.write("Start" + "\t" + "End" + "\t" + "Type" + "\n")
-        for _, row in overlapping_ref.iterrows():
-            f.write("\t".join([str(row[col]) for col in overlapping_ref.columns]) + "\n")
+    overlapping_ref[["Start", "End", "Type"]].to_csv(
+        f"{output_dir}/{sampleid}.refmorph.structure.tsv",
+        sep="\t", index=False
+    )
 
     #Overlaps in all morphs
     all_overlaps = []
@@ -454,6 +451,8 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
             (filtered_data_df["Envstart"] >= start) &
             (filtered_data_df["Envend"] <= end)
         ].copy()
+
+        print("Overlapping features found:", overlapping_ref.shape[0])
 
         if overlapping.empty:
             continue
@@ -488,10 +487,10 @@ def get_median_morph(sampleid, PBS_NCPUS, inputfasta, log_file, filtered_data_df
         print(f"No overlapping rRNAs found for any morph in sample {sampleid}")
 
     #Use refmorph to find rDNA arrays in input genome. 
-    #command=f"minimap2 -t {PBS_NCPUS} --secondary=no -o {output_dir}/{sampleid}.asm2refmorph.paf {output_dir}/{sampleid}.rDNA.refmorph.fasta {inputfasta}"
-    #print(f"Running command: {command}")
+    command=f"minimap2 -t {PBS_NCPUS} --secondary=no -o {output_dir}/{sampleid}.asm2refmorph.paf {output_dir}/{sampleid}.rDNA.refmorph.fasta {inputfasta}"
+    print(f"Running command: {command}")
 
-    #subprocess.run(command, shell=True, check=True)
+    subprocess.run(command, shell=True, check=True)
 
     
 
@@ -588,7 +587,7 @@ def main():
     parser.add_argument('-s', '--sampleid', required=True, help='Sample ID for output files')
     parser.add_argument('-l', '--hmmdb', required=True, help='Location of HMM db')
     parser.add_argument('-t', '--ncpus', required=True, help='Threads')
-    parser.add_argument('-p', '--species', required=True, help='Species name')
+    parser.add_argument('-p', '--species', required=False, help='Species name')
     parser.add_argument('-i', '--input_dir', required=False, default=".", help="Input directory (default: current directory)")
     parser.add_argument('-if', '--input_fasta', required=False, help="Full path to input FASTA file")
     parser.add_argument('-d', '--tmp_dir', required=False, help="Temporary directory for storing modified FASTA files (default:output directory)")
@@ -617,7 +616,7 @@ def main():
     sampleinfo = {
         "Sample_details":{
         "Sample ID": args.sampleid,
-        "Species":args.species
+        **({"Species": args.species} if args.species else {})
         }
     }
 
@@ -640,7 +639,7 @@ def main():
 
         inputfasta = fasta_candidates[0]
     
-    #run_hmm(args.ncpus, args.sampleid, args.output_dir, inputfasta, log_file, args.hmmdb, tmp_dir, args.e_value)
+    run_hmm(args.ncpus, args.sampleid, args.output_dir, inputfasta, log_file, args.hmmdb, tmp_dir, args.e_value)
 
     filtered_data_df, morphs_df = rna_builder(args.sampleid, inputfasta, args.output_dir, log_file)
 

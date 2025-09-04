@@ -8,6 +8,7 @@ library(taxize)
 library(RColorBrewer)
 library(ggnewscale)
 library(Biostrings)
+library(ggridges)
 ############################### Read in log files
 directory <- "/g/data/te53/zc4688/honours/analyses/chordates/new"
 
@@ -74,35 +75,6 @@ stats <- stats %>% mutate(`Sample ID` = str_replace(file, ".rDNA.morphs.fasta", 
 combined_df <- left_join(combined_df, stats)
 
 rm(stats)
-####################Inspect fails
-
-allspecies <-read.tree("/g/data/te53/zc4688/honours/trees/allspecies.phy")
-allspecies$edge.length <- NULL
-
-allspeciestree <- combined_df %>% 
-  mutate(success = ifelse(is.na(`Errors.Alignment filtering`) & is.na(`Errors.Morph identification`) & is.na(`Errors.Non-ambiguous morph identification`) & is.na(`Errors.Primary alignments`), "yes", "no")) %>% 
-  select(`Sample_details.Species`, success) %>% 
-  dplyr::rename("label" = "Sample_details.Species")
-
-allspecies$tip.label <- str_replace_all(allspecies$tip.label, " ", "_")
-allspecies$tip.label <- str_replace_all(allspecies$tip.label, "'", "")
-
-common_organisms <- intersect(allspeciestree$label, allspecies$tip.label)
-
-allspecies <- ape::drop.tip(allspecies, setdiff(allspecies$tip.label, common_organisms))
-
-allspeciestree <- allspeciestree %>% filter(label %in% common_organisms) %>% left_join(classifications %>% dplyr::rename("label" = "Species") %>% mutate(label = str_replace_all(label, " ", "_")))
-
-ggtree(allspecies) %<+% allspeciestree +
-  geom_tiplab(size=1, aes(color = success)) +
-  scale_color_manual(values = c("yes" = "black", "no" = "red")) + 
-  new_scale_color() + 
-  geom_tippoint(aes(color = group), size = 1.5) +
-  scale_color_manual(values = colours, name = "Taxonomic Group", na.translate = FALSE)
-
-  
-rm(allspecies)
-rm(allspeciestree)
 
 ############################### Create 'lengths' df - metadata df containing lengths + taxonomy info for all successful species with duplicates removed
 
@@ -120,7 +92,7 @@ classifications <- read.table("zc4688/honours/analyses/classifications.tsv", sep
 
 
 classifications <- classifications %>% 
-  dplyr::select(class, order, species) %>% 
+#  dplyr::select(class, order, species) %>% 
   dplyr::rename("Species" = "species")  
 
 classifications <- classifications %>% 
@@ -136,7 +108,7 @@ lengths <- left_join(lengths, classifications %>% mutate(Species = str_replace_a
       Species %in% c("Bubalus carabanensis", "Canis lupus dingo", "Diceros bicornis minor", "Elephas maximus indicus", 
                    "Hippopotamus amphibius kiboko", "Lagenorhynchus acutus", "Ovis ammon polii", 
                    "Perognathus longimembris pacificus", "Gorilla gorilla gorilla", "Glossophaga mutica", "Molossus nigricans",
-                   "Rangifer tarandus platyrhynchus", "Giraffa camelopardalis rothschildi", "mus musculus") ~ "Mammalia",
+                   "Rangifer tarandus platyrhynchus", "Giraffa camelopardalis rothschildi", "Mus musculus") ~ "Mammalia",
       Species %in% c("Elgaria multicarinata webbii", "Coluber constrictor foxii", "Spondylurus nitidus") ~ "Lepidosauria",
       Species %in% c("Melospiza melodia melodia", "Motacilla alba alba", "Pithys albifrons albifrons", "Ammospiza maritima maritima") ~ "Aves",
       Species %in% c("Mixophyes fleayi") ~ "Amphibia",
@@ -183,7 +155,7 @@ colours <- setNames(brewer.pal(n = 11, name = "Paired"), groups)
 
 tree <- read.tree("/g/data/te53/zc4688/honours/trees/species_ncbi.phy")
 
-
+nodes <- (tree$node.label)
 #only needed for timetree names to save some of the failed tips
 #treenames <- as.data.frame(tree$tip.label)
 #colnames(treenames) <- c("Timetreename")
@@ -221,10 +193,13 @@ tree$tip.label <- str_replace_all(tree$tip.label, "'", "")
 
 ########################################### Summary tree
 plotdata <- lengths %>% 
-  dplyr::select(Species, `Unit length`, `CN`, `Total length`,  `Sample ID`, Contigs, group)%>% 
+  dplyr::select(Species, `Unit length`, `CN`, `Total length`,  `Sample ID`, Contigs, group, `Minimum unit length`, `Maximum unit length`, Q1, Q3)%>% 
+  mutate(Q1 = as.numeric(Q1), Q3 = as.numeric(Q3)) %>% 
   dplyr::rename("label" = "Species") %>%  
   relocate(label, .before = everything())  %>% 
   filter(label %in% common_organisms)
+
+common_class <- lengths %>% group_by(group) %>% summarise(n = n()) %>% filter(n > 5) %>% select(group) %>% unlist()
 
 ggplot(plotdata %>% filter(group %in% common_class)) + geom_density_ridges(aes(x = `Unit length`, fill = group, y = group), alpha = 0.8) + scale_fill_manual(values = colours, name = "Taxonomic group") + theme_bw() + theme(axis.title.y = element_blank(), axis.ticks.y = element_blank(), axis.text.y = element_blank())
 ggsave("zc4688/honours/analyses/chordates/figures/lengths.ridges.pdf",)
@@ -235,8 +210,6 @@ ggsave("zc4688/honours/analyses/chordates/figures/lengths.density.pdf",)
 
 p <- ggtree(tree, size=0.5) + 
   geom_tiplab(size=1) 
-
-
 
 p <- p + geom_facet(
   data = plotdata,
@@ -263,7 +236,7 @@ p <- p + geom_facet(
   theme_tree2() + xlim_expand(c(0, 23), "Tree") + xlim_expand(c(0, 60), "Unit length (Kb)") +
   scale_fill_manual(values = colours) + labs(fill = "Taxonomic Group") +coord_cartesian(clip = 'off') 
 
-facet_widths(p, widths = c(3, 1, 1, 1, 1))
+facet_widths(p, widths = c(2, 1, 1, 1, 1))
 
 #trees from timetree are saved at:
 #ggsave("zc4688/honours/analyses/chordates/figures/tree_current.png", height = 20, width = 15)
@@ -274,6 +247,88 @@ ggsave("zc4688/honours/analyses/chordates/figures/ncbitree.png", height = 20, wi
 ggsave("zc4688/honours/analyses/chordates/figures/ncbitree.pdf", height = 20, width = 15)
 
 
+p <- ggtree(tree, size=0.5) 
+
+
+p <- p + geom_facet(
+  data = plotdata,
+  mapping = aes(x = ifelse(`Unit length` < 60000, `Unit length`/1000, 60), fill = group),
+  geom = geom_col,       # Horizontal bar chart
+  panel = "Unit length (Kb)",
+  width = 0.6 
+)  +
+  geom_facet(
+    data = plotdata,
+    mapping = aes(x = ifelse(`Unit length` >= 60000, 60, NA)),
+    geom = geom_point,
+    panel = "Unit length (Kb)",
+    size = 1
+  )+ 
+  geom_facet(
+    data = plotdata,
+    mapping = aes(x = ifelse(`Q1` < 60000, `Q1`/1000, 60), xend = ifelse(`Q3` < 60000, `Q3`/1000, 60)),
+    geom = geom_segment,      
+    panel = "Unit length (Kb)",
+    linewidth = 0.2
+  )  +
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 15), "Tree") + xlim_expand(c(0, 60), "Unit length (Kb)") +
+  scale_fill_manual(values = colours) + labs(fill = "Taxonomic Group") +coord_cartesian(clip = 'off') 
+facet_widths(p, widths = c(1, 3))
+
+ggsave("zc4688/honours/analyses/chordates/figures/lengths_quartiles.pdf", height = 20, width = 15)
+
+p <- ggtree(tree, size=0.5) 
+
+
+p <- p + geom_facet(
+  data = plotdata,
+  mapping = aes(x = ifelse(`Unit length` < 60000, `Unit length`/1000, 60), fill = group),
+  geom = geom_col,       # Horizontal bar chart
+  panel = "Unit length (Kb)",
+  width = 0.6 
+)  +
+  geom_facet(
+    data = plotdata,
+    mapping = aes(x = ifelse(`Unit length` >= 60000, 60, NA), color = group),
+    geom = geom_point,
+    panel = "Unit length (Kb)",
+    size = 1
+  )+
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 15), "Tree") + xlim_expand(c(0, 60), "Unit length (Kb)") +
+  scale_fill_manual(values = colours) + scale_color_manual(values = colours) +labs(fill = "Taxonomic Group") +coord_cartesian(clip = 'off') 
+facet_widths(p, widths = c(1, 3))
+
+ggsave("zc4688/honours/analyses/chordates/figures/ncbi_lengthsonly_nolabs.pdf", height = 20, width = 15)
+ggsave("zc4688/honours/analyses/chordates/figures/ncbi_lengthsonly_nolabs.png", height = 20, width = 15)
+
+p <- ggtree(tree, size=0.5) +
+  geom_tiplab(size=1) 
+  
+
+
+p <- p + geom_facet(
+  data = plotdata,
+  mapping = aes(x = ifelse(`Unit length` < 60000, `Unit length`/1000, 60), fill = group),
+  geom = geom_col,       # Horizontal bar chart
+  panel = "Unit length (Kb)",
+  width = 0.6 
+)  +
+  geom_facet(
+    data = plotdata,
+    mapping = aes(x = ifelse(`Unit length` >= 60000, 60, NA), color = group),
+    geom = geom_point,
+    panel = "Unit length (Kb)",
+    size = 1
+  )+
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 25), "Tree") + xlim_expand(c(0, 60), "Unit length (Kb)") +
+  scale_fill_manual(values = colours) + scale_color_manual(values = colours) +labs(fill = "Taxonomic Group") +coord_cartesian(clip = 'off') 
+facet_widths(p, widths = c(1, 3))
+
+ggsave("zc4688/honours/analyses/chordates/figures/ncbi_lengthsonly_withlabs.pdf", height = 20, width = 15)
+ggsave("zc4688/honours/analyses/chordates/figures/ncbi_lengthsonly_withlabs.png", height = 20, width = 15)
 
 ########################### Read in and prepare structure data
 structure_files <- list.files(directory, pattern = "\\.structure.tsv$", full.names = TRUE)
@@ -283,7 +338,7 @@ data_list <- list()
 
 # Loop through each file and read the JSON into a data frame
 for (file in structure_files) {
-  data <- read.delim(file, header = T, sep="\t")
+  data <- read.delim(file, header = T, sep="\t", comment.char = "#")
   samplename <- str_replace(basename(file), ".refmorph.structure.tsv", "")
   data <- data %>% 
     select(Type, HMMbegin, HMMend, Envstart, Envend, `X..HMM`, `Target.length`, Strand) %>% 
@@ -331,6 +386,7 @@ structure <- structure %>% left_join(refmorphs)  %>%
 
 
 
+
 ################################################################################ Create fasta files for msa
 
 msadf <- structure %>% 
@@ -372,77 +428,245 @@ structureplot <- structure %>%
   dplyr::rename("label" = "Species") %>% 
   relocate(label, .before = everything())
 
-#structureplot <- structureplot %>% mutate(Hmmpalign = Hmmpalign * 100)
-
-
-
-
-
-
-
 tmp <- structureplot %>% select(label, group)
 
 p <- ggtree(tree) %<+% tmp +
-  geom_tiplab(size=1) +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group")
 
 p <- p + geom_facet(
   data = structureplot,
-  mapping = aes(x = 0, xend = ifelse(`Unit length` < 35000, `Unit length`, 35000)),
+  mapping = aes(x = 0, xend = ifelse(`Unit length` < 60000, `Unit length`, 60000)),
   geom = geom_segment,       # Horizontal bar chart
   panel = " ",
-  color = "grey80",
+  color = "grey40",
   alpha = 0.3
-) + new_scale_color() + geom_facet(
+) + new_scale_color() +   geom_facet(
+  data = plotdata,
+  mapping = aes(x = ifelse(`Unit length` >= 60000, 60000, NA)),
+  geom = geom_point,
+  color = "grey40",
+  panel = " ",
+  size = 1
+)+ geom_facet(
   data = structureplot,
   mapping = aes(x = Start, xend = End, color = Type),
   geom = geom_segment,       # Horizontal bar chart
   panel = " "
 ) +
   scale_y_discrete() +  
-  theme_tree2() + xlim_expand(c(0, 6), "Tree")+labs(alpha = "% HMM Match") + scale_alpha(range = c(0.1, 1))+
-  scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "Unit")+
+  theme_tree2() + xlim_expand(c(0, 23), "Tree")+
+  scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "rRNA")+
   guides(
     color = guide_legend(order = 1)) + coord_cartesian(clip = 'off')
+facet_widths(p, widths = c(1, 3))
 
-p
 
 ggsave("zc4688/honours/analyses/chordates/figures/structure_worepeats.png", height = 20, width = 15)
 ggsave("zc4688/honours/analyses/chordates/figures/structure_worepeats.pdf", height = 20, width = 15)
 
 
 p <- ggtree(tree) %<+% tmp +
-  geom_tiplab(size=1) +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group")
 
 test <- structureplot %>% select(label, `Unit length`, group) %>% dplyr::rename("testgroup" = "group") %>% group_by(label) %>% 
   slice_head(n=1) %>% ungroup()
-p <- p  + new_scale_color() + geom_facet(
-  data = structureplot,
-  mapping = aes(x = Start, xend = End, color = Type, alpha = as.numeric(Hmmpalign)),
-  geom = geom_segment,       # Horizontal bar chart
-  panel = "Unit Structure"
-)  + geom_facet(
+p <- p  +   geom_facet(
   data = test,
   mapping = aes(x = ifelse(`Unit length`/1000 < 60, `Unit length`/1000, 60), fill = testgroup),
   geom = geom_col,       # Horizontal bar chart
   panel = "Unit length (Kb)",
   width = 0.6 
-) +
-  scale_y_discrete() +  
-  theme_tree2() + xlim_expand(c(0, 6), "Tree")+labs(alpha = "% HMM Match") + scale_fill_manual(values = colours) + scale_alpha(range = c(0.1, 1))+
+)  + geom_facet(
+  data = test,
+  mapping = aes(x = ifelse(`Unit length` >= 60000, 60, NA), color = testgroup),
+  geom = geom_point,
+  panel = "Unit length (Kb)",
+  size = 1
+)+ scale_fill_manual(values = colours, name = "Taxonomic Group") + 
+  scale_color_manual(values = colours, name = "Taxonomic Group") +
+      new_scale_color() +
+  geom_facet(
+  data = structureplot,
+  mapping = aes(x = Start, xend = End, color = Type),
+  geom = geom_segment,       # Horizontal bar chart
+  panel = "Unit Structure") +
   scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "Unit")+
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 23), "Tree")+labs(alpha = "% HMM Match") +  scale_alpha(range = c(0.1, 1))+
   guides(
     color = guide_legend(order = 1),
     fill = guide_none()) + coord_cartesian(clip = 'off')
 
-facet_widths(p, widths = c(3, 2, 1))
+facet_widths(p, widths = c(1, 2, 3))
 
 
 ggsave("zc4688/honours/analyses/chordates/figures/structure_seplengths.png", height = 20, width = 15)
 ggsave("zc4688/honours/analyses/chordates/figures/structure_seplengths.pdf", height = 20, width = 15)
+
+############################### Boxplots
+
+boxplots <- structure %>% 
+  group_by(`Sample ID`, Type) %>% 
+  filter((End - Start) == max(End - Start)) %>% 
+  arrange(`Sample ID`, Type, Start) %>% 
+  slice_head(n = 1) %>%  #if there are multiple of same length, take the first
+  ungroup() %>% 
+  select(`Sample ID`, Type, Start, End, group, `Unit length`) %>% pivot_wider(
+    names_from = Type,
+    values_from = c(Start, End),
+    names_glue = "{Type}_{.value}"
+  ) %>% 
+  mutate(ITS1 = `5_8S_rRNA_Start` - `18S_rRNA_End`,
+         `ITS2` = `28S_rRNA_Start` - `5_8S_rRNA_End`,
+         `18S_length` = `18S_rRNA_End` - `18S_rRNA_Start`,
+         `28S_length` = `28S_rRNA_End` - `28S_rRNA_Start`,
+         `IGS_length` = `Unit length` - `28S_rRNA_End`)
+
+#5 species are missing ITS measuremnts due to lack of 5.8S. 4 of these don't have 5.8s alignments in refmorph. the remaining (GCA_963675345, tunciate) seems to genuinely be missing part of the 5.8S unit - consistently only cover 75% of the model so don't pass filtering
+
+its1 <- boxplots %>% 
+  left_join(refmorphs) %>% 
+  mutate(name = paste(`Sample ID`, refmorph, sep = "_")) %>% 
+  select(name, `18S_rRNA_End`, `5_8S_rRNA_Start`) %>% 
+  na.omit()
+write.table(its1, "zc4688/honours/analyses/chordates/motif/its1.csv", sep = ",", quote = F, row.names = F, col.names = F)
+
+its2 <- boxplots %>% 
+  left_join(refmorphs) %>% 
+  mutate(name = paste(`Sample ID`, refmorph, sep = "_")) %>% 
+  select(name, `5_8S_rRNA_End`, `28S_rRNA_Start`) %>% 
+  na.omit()
+write.table(its2, "zc4688/honours/analyses/chordates/motif/its2.csv", sep = ",", quote = F, row.names = F, col.names = F)
+
+structuremetadata <- boxplots
+
+boxplots <- boxplots %>% 
+  group_by(group) %>% mutate(n = n()) %>% ungroup() %>%  filter(n >=5) %>% select(-n) %>% 
+  pivot_longer(cols = c(`ITS1`, ITS2, `18S_length`, `28S_length`, `IGS_length`, `Unit length`), names_to = "Variable", values_to = "Value") %>% 
+  dplyr::rename(label = group) %>% 
+  select(label, Variable, Value)
+
+
+
+ggplot(boxplots, aes(y = Value, fill = label)) +
+  geom_boxplot(coef = 1.5, outliers = FALSE, notch = TRUE) +
+  facet_wrap(~ Variable, scales = "free_y")  + theme_bw() + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
+  scale_fill_manual(values = colours) +
+  labs(fill = "Taxonomic Group")
+
+ggsave("zc4688/honours/analyses/chordates/figures/boxplot.png", height = 8, width = 12)
+
+
+############################### Boxplots with tree
+classtree <- read.tree("/g/data/te53/zc4688/honours/trees/classes_ncbi.phy")
+
+
+classtree$tip.label[4] <- "Testudines and Crocodylia"
+
+
+boxplots <- boxplots %>%
+  filter(label %in% common_class)
+
+
+
+classtree$edge.length <- NULL
+classtree <- ape::drop.tip(classtree, setdiff(classtree$tip.label, common_class))
+
+############################### ITS only
+p <- ggtree(classtree) + 
+  geom_tiplab(size=3) +
+  geom_tippoint(aes(color = label), show.legend = FALSE, size = 1.5) +
+  scale_color_manual(values = colours) + theme(legend.position = "none")
+
+
+
+p <- p + geom_facet(
+  data = boxplots %>% filter(Variable == "ITS1"),
+  mapping = aes(x = Value, group = interaction(label, Variable), fill = Variable),
+  geom = geom_boxplot,       
+  panel = "ITS1 Length (bp)",
+  notch = TRUE, outliers = FALSE, coef = 2.5
+) + geom_facet(
+  data = boxplots %>% filter(Variable == "ITS2"),
+  mapping = aes(x = Value, group = interaction(label, Variable), fill = Variable),
+  geom = geom_boxplot,       
+  panel = "ITS2 Length (bp)",
+  notch = TRUE, outliers = FALSE, coef = 2.5
+) +
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 20), "Tree") +
+  theme(legend.position = "none") + labs(color = NULL, fill = NULL) + scale_fill_brewer(palette = "Set1") 
+
+facet_widths(p, widths = c(1, 1, 1))
+ggsave("zc4688/honours/analyses/chordates/figures/itsboxplot.pdf", height = 8, width = 12)
+
+
+############################### All lengths
+
+p <- ggtree(classtree) + 
+  geom_tiplab(size=3, offset = 0.5) +
+  geom_tippoint(aes(color = label), show.legend = FALSE, size = 1.5) +
+  scale_color_manual(values = colours) + theme(legend.position = "none")
+
+
+p <- p + new_scale_color() + geom_facet(
+  data = boxplots %>% filter(Variable == "Unit length"),
+  mapping = aes(x = Value/1000, group = interaction(label, Variable), fill = label),
+  geom = geom_boxplot,       
+  panel = "Unit Length (Kb)",
+  notch = TRUE, outliers = F, coef = 2.5
+) + geom_facet(
+  data = boxplots %>% filter(Variable == "ITS1"),
+  mapping = aes(x = Value, group = interaction(label, Variable), fill = label),
+  geom = geom_boxplot,       
+  panel = "ITS1 Length (bp)",
+  notch = TRUE, outliers = FALSE, coef = 2.5
+) + geom_facet(
+  data = boxplots %>% filter(Variable == "ITS2"),
+  mapping = aes(x = Value, group = interaction(label, Variable), fill = label),
+  geom = geom_boxplot,       
+  panel = "ITS2 Length (bp)",
+  notch = TRUE, outliers = FALSE, coef = 2.5
+) +  geom_facet(
+  data = boxplots %>% filter(Variable == "IGS_length"),
+  mapping = aes(x = Value/1000, group = interaction(label, Variable), fill = label),
+  geom = geom_boxplot,       
+  panel = "IGS Length (Kb)",
+  notch = TRUE, outliers = FALSE, coef = 2.5
+) +
+  geom_facet(
+    data = boxplots %>% filter(Variable == "18S_length"),
+    mapping = aes(x = Value/1000, fill = label, group = interaction(label, Variable)),
+    geom = geom_boxplot,       
+    panel = "18S Length (Kb)",
+    notch = TRUE, outliers = FALSE, coef = 2.5
+  )+
+  geom_facet(
+    data = boxplots %>% filter(Variable == "28S_length"),
+    mapping = aes(x = Value/1000, fill = label, group = interaction(label, Variable)),
+    geom = geom_boxplot,       
+    panel = "28S Length (Kb)",
+    notch = TRUE, outliers = FALSE, coef = 2.5
+  )+
+  scale_y_discrete() +  
+  theme_tree2() + xlim_expand(c(0, 20), "Tree") +
+  theme(legend.position =  "none")  + scale_fill_manual(values = colours) +
+  coord_cartesian(clip = "off")
+
+facet_widths(p, widths = c(1, 1, 1))
+ggsave("zc4688/honours/analyses/chordates/figures/combinedboxplots.pdf", height = 8, width = 12)
+ggsave("zc4688/honours/analyses/chordates/figures/combinedboxplots.png", height = 8, width = 12)
+
+
+############################### Summary stats
+boxplots %>% 
+  group_by(label, Variable) %>% 
+  summarise(Median = median(Value, na.rm = TRUE), Min = min(Value, na.rm = TRUE),  Max = max(Value, na.rm = TRUE), Species = n()) %>% 
+  view %>% 
+  write.table("zc4688/honours/metadata/summary_stats.tsv", sep = "\t", quote = F, row.names = F)
+
 
 
 ################################################################ Trees with repeats
@@ -458,9 +682,7 @@ for (i in 1:length(repeatmasker_files)) {
   rm[[i]] <- x
 }
 
-rm <- bind_rows(rm)
-
-rm <- rm %>% 
+rm <- bind_rows(rm) %>% 
   separate(V9, into = c("id", "motif", "class", "length"), sep = ";")  %>% 
   mutate(type = str_replace(motif, "Target Motif:", ""), class = str_replace(class, "RepeatType ClassFamily:", "")) %>% 
   select(`Sample ID`, V4, V5, V7, type, class) %>% dplyr::rename("start" = "V4", "end" = "V5", "strand" = "V7") %>% 
@@ -537,13 +759,14 @@ classifications %>%
   filter(group %in% common_class) %>% 
   pivot_longer(cols = c(TEs, `Simple repeats`), names_to = "variable", values_to = "value") %>% view %>% 
   ggplot() + 
-  geom_boxplot(aes(x = group, y = value, fill = variable)) + 
+  geom_boxplot(aes(x = group, y = value, fill = variable), notch = F) + 
   theme_bw() + 
   labs(x = NULL, y = "Proportion of IGS", fill = NULL) + 
   scale_fill_brewer(palette = "Pastel1") + 
   theme(axis.text.x = element_text(angle = 45, vjust = 0.6)) 
 
-
+ggsave("zc4688/honours/analyses/chordates/figures/igsrepeats.pdf", height = 8, width = 12)
+ggsave("zc4688/honours/analyses/chordates/figures/igsrepeats.png", height = 8, width = 12)
 
 ####################### Repeat tree
 
@@ -567,18 +790,24 @@ repeat_colors <- c("DNA transposon" = "#7570B3", "LINE" = "#E7298A", "LTR" = "#D
 test <- structureplot %>% select(label, group)
 
 p <- ggtree(tree) %<+% test +
-  geom_tiplab(size=1) +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group")
 
 p <- p + geom_facet(
   data = structureplot,
-  mapping = aes(x = 0, xend = ifelse(`Unit length` < 35000, `Unit length`, 35000)),
+  mapping = aes(x = 0, xend = ifelse(`Unit length` < 60000, `Unit length`, 60000)),
   geom = geom_segment,       # Horizontal bar chart
   panel = " ",
-  color = "grey80",
+  color = "grey50",
   alpha = 0.3
-) +
+) + geom_facet(
+  data = plotdata,
+  mapping = aes(x = ifelse(`Unit length` >= 60000, 60000, NA)),
+  geom = geom_point,
+  color = "grey50",
+  panel = " ",
+  size = 1
+)+
   new_scale_color() + geom_facet(
     data = structureplot,
     mapping = aes(x = Start, xend = End, color = Type),
@@ -588,7 +817,7 @@ p <- p + geom_facet(
   scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "Unit")+
   new_scale_color() +
   geom_facet(
-    data = repeats %>% filter(end < 35000),
+    data = repeats %>% filter(end < 60000),
     mapping = aes(x = start, xend = end, color = repeatgroup),
     geom = geom_segment, 
     panel = " ")+ scale_color_manual(
@@ -598,11 +827,10 @@ p <- p + geom_facet(
   scale_y_discrete() +  
   theme_tree2() + scale_alpha(range = c(0.1, 1))+
   guides(
-    color = guide_legend(order = 1)) + coord_cartesian(clip = 'off')
+    color = guide_legend(order = 1)) + coord_cartesian(clip = 'off') + xlim_expand(c(0, 23), "Tree")
 
-#for trees with timetree, add xlim_expand(c(0, 40), "Tree")
+facet_widths(p, widths = c(1, 3))
 
-p
 
 
 #structure on old timetree tree saved at:
@@ -626,38 +854,34 @@ primarystructure <- primarystructure %>% select(X1, X4, X6, X7, X10, X11, X13) %
   
 primarystructure <- left_join(lengths %>% select(-type), primarystructure) %>% 
   mutate(Start = ifelse(strand == "+", envstart - morphstart, morphend - envstart + 1),
-         End = ifelse(strand == "+", envend - morphstart, morphend - envend + 1) ) 
-
-
-
-primarystructure <- primarystructure %>%
+         End = ifelse(strand == "+", envend - morphstart, morphend - envend + 1) )  %>%
   mutate(Species = str_replace_all(Species, "_", " ")) %>% 
-  left_join(classifications) %>% 
-  filter(Species %in% common_organisms) 
-
-
-primarystructure <- primarystructure %>% 
+  filter(Species %in% common_organisms)  %>% 
   dplyr::rename("label" = "Species") %>% 
   relocate(label, .before = everything())
 
 
 
 
-tmp <- primarystructure %>% select(label, group)
-
-p <- ggtree(tree) %<+% tmp +
-  geom_tiplab(size=1) +
+p <- ggtree(tree) %<+% (primarystructure %>% select(label, group)) +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group")
 
 p <- p + geom_facet(
   data = primarystructure,
-  mapping = aes(x = 0, xend = ifelse(`Unit length` < 35000, `Unit length`, 35000)),
+  mapping = aes(x = 0, xend = ifelse(`Unit length` < 60000, `Unit length`, 60000)),
   geom = geom_segment,       # Horizontal bar chart
   panel = " ",
-  color = "grey80",
+  color = "grey50",
   alpha = 0.3
-) +
+) + geom_facet(
+  data = plotdata,
+  mapping = aes(x = ifelse(`Unit length` >= 60000, 60000, NA)),
+  geom = geom_point,
+  color = "grey50",
+  panel = " ",
+  size = 1
+)+
   new_scale_color() + geom_facet(
     data = primarystructure,
     mapping = aes(x = Start, xend = End, color = type),
@@ -665,12 +889,13 @@ p <- p + geom_facet(
     panel = " "
   )  +
   scale_y_discrete() +  
-  theme_tree2() + xlim_expand(c(0, 6), "Tree")+labs(alpha = "% HMM Match") + scale_alpha(range = c(0.1, 1))+
-  scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "Unit")+
+  theme_tree2() + xlim_expand(c(0, 23), "Tree")+labs(alpha = "% HMM Match") + scale_alpha(range = c(0.1, 1))+
+  scale_color_manual(values = c("18S_rRNA" = "#F75F86", "28S_rRNA" = "cornflowerblue", "5_8S_rRNA" = "#50C878", "5S_rRNA" = "purple"), name = "rRNA")+
   guides(
     color = guide_legend(order = 1)) + coord_cartesian(clip = 'off')
 
-p
+facet_widths(p, widths = c(1, 3))
+
 
 ggsave("zc4688/honours/analyses/chordates/figures/structure_primary.png", height = 20, width = 15)
 ggsave("zc4688/honours/analyses/chordates/figures/structure_primary.pdf", height = 20, width = 15)
@@ -702,7 +927,7 @@ make_classplots <- function(plotclass){
     mapping = aes(x = 0, xend = ifelse(`Unit length` < 15000, `Unit length`, 15000)),
     geom = geom_segment,       # Horizontal bar chart
     panel = "Unit Structure",
-    color = "grey80",
+    color = "grey50",
     alpha = 0.3, linewidth = linewidth
   ) +
     geom_facet(
@@ -741,7 +966,7 @@ make_classplots <- function(plotclass){
     mapping = aes(x = 0, xend = `Unit length` ),
     geom = geom_segment,       # Horizontal bar chart
     panel = "Unit Structure",
-    color = "grey80",
+    color = "grey50",
     alpha = 0.3, linewidth = linewidth
   )+ geom_facet(
     data = x,
@@ -798,168 +1023,6 @@ ggplot() + geom_segment(data = structure %>% filter(Species == "Eospalax fontani
     name = "Repeat Type"
   )   + coord_fixed(ratio = 5000, clip = "off")+
   theme_void() 
-############################### Boxplots
-
-boxplots <- structure %>% 
-  group_by(`Sample ID`, Type) %>% 
-  filter((End - Start) == max(End - Start)) %>% 
-  arrange(`Sample ID`, Type, Start) %>% 
-  slice_head(n = 1) %>%  #if there are multiple of same length, take the first
-  ungroup() %>% 
-  select(`Sample ID`, Type, Start, End, group, `Unit length`) %>% pivot_wider(
-    names_from = Type,
-    values_from = c(Start, End),
-    names_glue = "{Type}_{.value}"
-  ) %>% 
-  mutate(ITS1 = `5_8S_rRNA_Start` - `18S_rRNA_End`,
-         `ITS2` = `28S_rRNA_Start` - `5_8S_rRNA_End`,
-         `18S_length` = `18S_rRNA_End` - `18S_rRNA_Start`,
-         `28S_length` = `28S_rRNA_End` - `28S_rRNA_Start`,
-         `IGS_length` = `Unit length` - `28S_rRNA_End`)
-
-#5 species are missing ITS measuremnts due to lack of 5.8S. 4 of these don't have 5.8s alignments in refmorph. the remaining (GCA_963675345, tunciate) seems to genuinely be missing part of the 5.8S unit - consistently only cover 75% of the model so don't pass filtering
-
-its1 <- boxplots %>% 
-  left_join(refmorphs) %>% 
-  mutate(name = paste(`Sample ID`, refmorph, sep = "_")) %>% 
-  select(name, `18S_rRNA_End`, `5_8S_rRNA_Start`) %>% 
-  na.omit()
-write.table(its1, "zc4688/honours/analyses/chordates/motif/its1.csv", sep = ",", quote = F, row.names = F, col.names = F)
-
-its2 <- boxplots %>% 
-  left_join(refmorphs) %>% 
-  mutate(name = paste(`Sample ID`, refmorph, sep = "_")) %>% 
-  select(name, `5_8S_rRNA_End`, `28S_rRNA_Start`) %>% 
-  na.omit()
-write.table(its2, "zc4688/honours/analyses/chordates/motif/its2.csv", sep = ",", quote = F, row.names = F, col.names = F)
-
-structuremetadata <- boxplots
-
-boxplots <- boxplots %>% 
-  group_by(group) %>% mutate(n = n()) %>% ungroup() %>%  filter(n >=5) %>% select(-n) %>% 
-  pivot_longer(cols = c(`ITS1`, ITS2, `18S_length`, `28S_length`, `IGS_length`, `Unit length`), names_to = "Variable", values_to = "Value") %>% 
-  dplyr::rename(label = group) %>% 
-  select(label, Variable, Value)
-
-
-
-ggplot(boxplots, aes(y = Value, fill = label)) +
-  geom_boxplot(coef = 1.5, outliers = FALSE, notch = TRUE) +
-  facet_wrap(~ Variable, scales = "free_y")  + theme_bw() + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank()) +
-  scale_fill_manual(values = colours) +
-  labs(fill = "Taxonomic Group")
-
-ggsave("zc4688/honours/analyses/chordates/figures/boxplot.png", height = 8, width = 12)
-
-
-############################### Boxplots with tree
-classtree <- read.tree("/g/data/te53/zc4688/honours/trees/classes_ncbi.phy")
-
-
-classtree$tip.label[4] <- "Testudines and Crocodylia"
-common_class <- intersect(boxplots$label, classtree$tip.label)
-
-
-boxplots <- boxplots %>%
-  filter(label %in% common_class)
-
-
-
-classtree$edge.length <- NULL
-classtree <- ape::drop.tip(classtree, setdiff(classtree$tip.label, common_class))
-
-############################### ITS only
-p <- ggtree(classtree) + 
-  geom_tiplab(size=3) +
-  geom_tippoint(aes(color = label), show.legend = FALSE, size = 1.5) +
-  scale_color_manual(values = colours) + theme(legend.position = "none")
-
-
-
-p <- p + geom_facet(
-  data = boxplots %>% filter(Variable == "ITS1"),
-  mapping = aes(x = Value, group = interaction(label, Variable), fill = Variable),
-  geom = geom_boxplot,       
-  panel = "ITS1 Length (bp)",
-  notch = TRUE, outliers = FALSE, coef = 2.5
-) + geom_facet(
-  data = boxplots %>% filter(Variable == "ITS2"),
-  mapping = aes(x = Value, group = interaction(label, Variable), fill = Variable),
-  geom = geom_boxplot,       
-  panel = "ITS2 Length (bp)",
-  notch = TRUE, outliers = FALSE, coef = 2.5
-) +
-  scale_y_discrete() +  
-  theme_tree2() + xlim_expand(c(0, 20), "Tree") +
-  theme(legend.position = "none") + labs(color = NULL, fill = NULL) + scale_fill_brewer(palette = "Set1") 
-
-facet_widths(p, widths = c(1, 1, 1))
-ggsave("zc4688/honours/analyses/chordates/figures/itsboxplot.pdf", height = 8, width = 12)
-
-
-############################### All lengths
-
-p <- ggtree(classtree) + 
-  geom_tiplab(size=3, offset = 0.5) +
-  geom_tippoint(aes(color = label), show.legend = FALSE, size = 1.5) +
-  scale_color_manual(values = colours) + theme(legend.position = "none")
-
-
-p <- p + new_scale_color() + geom_facet(
-  data = boxplots %>% filter(Variable == "Unit length"),
-  mapping = aes(x = Value/1000, group = interaction(label, Variable), fill = label),
-  geom = geom_violin,       
-  panel = "Unit Length (Kb)",
-  notch = TRUE, outliers = F, coef = 2.5
-) + geom_facet(
-  data = boxplots %>% filter(Variable == "ITS1"),
-  mapping = aes(x = Value, group = interaction(label, Variable), fill = label),
-  geom = geom_boxplot,       
-  panel = "ITS1 Length (bp)",
-  notch = TRUE, outliers = FALSE, coef = 2.5
-) + geom_facet(
-  data = boxplots %>% filter(Variable == "ITS2"),
-  mapping = aes(x = Value, group = interaction(label, Variable), fill = label),
-  geom = geom_boxplot,       
-  panel = "ITS2 Length (bp)",
-  notch = TRUE, outliers = FALSE, coef = 2.5
-) +  geom_facet(
-  data = boxplots %>% filter(Variable == "IGS_length"),
-  mapping = aes(x = Value/1000, group = interaction(label, Variable), fill = label),
-  geom = geom_boxplot,       
-  panel = "IGS Length (Kb)",
-  notch = TRUE, outliers = FALSE, coef = 2.5
-) +
-  geom_facet(
-    data = boxplots %>% filter(Variable == "18S_length"),
-    mapping = aes(x = Value/1000, fill = label, group = interaction(label, Variable)),
-    geom = geom_boxplot,       
-    panel = "18S Length (Kb)",
-    notch = TRUE, outliers = FALSE, coef = 2.5
-  )+
-  geom_facet(
-    data = boxplots %>% filter(Variable == "28S_length"),
-    mapping = aes(x = Value/1000, fill = label, group = interaction(label, Variable)),
-    geom = geom_boxplot,       
-    panel = "28S Length (Kb)",
-    notch = TRUE, outliers = FALSE, coef = 2.5
-  )+
-  scale_y_discrete() +  
-  theme_tree2() + xlim_expand(c(0, 20), "Tree") +
-  theme(legend.position =  "none")  + scale_fill_manual(values = colours) +
-  coord_cartesian(clip = "off")
-
-facet_widths(p, widths = c(1, 1, 1))
-ggsave("zc4688/honours/analyses/chordates/figures/combinedboxplots.pdf", height = 8, width = 12)
-ggsave("zc4688/honours/analyses/chordates/figures/combinedboxplots.png", height = 8, width = 12)
-
-
-############################### Summary stats
-boxplots %>% 
-  group_by(label, Variable) %>% 
-  summarise(Median = median(Value, na.rm = TRUE), Min = min(Value, na.rm = TRUE),  Max = max(Value, na.rm = TRUE), Species = n()) %>% 
-  view
-
 
 ############################### Metadata table
 
@@ -967,23 +1030,55 @@ metadata <- metadata %>%
   left_join(structuremetadata)
 
 metadata <- metadata %>% 
-  select(-"18S_rRNA_Start", -"28S_rRNA_Start", -"5_8S_rRNA_Start", -"18S_rRNA_End", -"28S_rRNA_End", -"5_8S_rRNA_End") %>% 
+  select(-"18S_rRNA_Start", -"28S_rRNA_Start", -"5_8S_rRNA_Start", -"18S_rRNA_End", -"28S_rRNA_End", -"5_8S_rRNA_End", -(11:29)) %>% 
   dplyr::rename("Number of morphs" = "rDNA_details.Number of morphs")
 
 write.table(metadata, "zc4688/honours/metadata/metadata.tsv", sep = "\t", quote = F, row.names = F)
 
 ################################correlations
-metadata <- read.delim("zc4688/honours/metadata/metadata.tsv", sep = "\t")
 moremetadata <- read.delim("zc4688/honours/metadata/assembly_metadata.tsv")
-metadata <- left_join(metadata, moremetadata %>% separate(accession, into = c("Sample.ID", "number"), sep = "\\."))
-summary(lm(`Unit.length` ~ X28S_length, data = metadata))
+metadata <- left_join(metadata, moremetadata %>% separate(accession, into = c("Sample ID", "number"), sep = "\\."))
+summary(lm(`Unit length` ~ `28S_length`, data = metadata))
 
-ggplot(metadata, aes(x = X28S_length, y = Unit.length, color = group)) + 
+summary(lm(`Unit length` ~ `genome_size`, data = metadata))
+
+tmp <- metadata %>% separate(assembly_stats, sep = ",", into = c("contigL50", "contigN50", "gcCount", "gcPercent", "other"))  %>% mutate(gcPercent = as.numeric(str_replace(gcPercent, "gcPercent:", "")))
+
+ggplot(metadata, aes(x = `ITS2`, y = `Unit length`, color = group)) + 
   geom_point() + 
   scale_color_manual(values = colours) + 
   theme_bw() + 
   coord_cartesian(ylim = c(0, 120000))
 
+tes <- read.delim("zc4688/honours/metadata/tes.txt")
+tmp <- metadata %>% select(`Unit length`, `group`, genome_size, `28S_length`, `18S_length`, IGS_length, ITS1, ITS2, assembly_stats)%>% separate(assembly_stats, sep = ",", into = c("contigL50", "contigN50", "gcCount", "gcPercent", "other"))  %>% mutate(gcPercent = as.numeric(str_replace(gcPercent, "gcPercent:", "")))
+predictor_cols <- setdiff(names(tmp), "Unit length")
+
+map(predictor_cols, ~ {
+  formula_str <- paste0("`Unit length` ~ `", .x, "`")
+  formula <- as.formula(formula_str)
+  model <- lm(formula, data = tmp, na.action = "na.omit")
+  summary(model)$coefficients[2, ]  # extract slope info only (not intercept)
+}) %>% bind_rows(.id = "predictor") %>%
+  dplyr::rename(
+    estimate = Estimate,
+    std_error = `Std. Error`,
+    t_value = `t value`,
+    p_value = `Pr(>|t|)`
+  ) %>% view
+
+
+age <- read.delim("zc4688/honours/metadata/anage_data.txt")
+age <- age %>% mutate(Species = paste(Genus, Species, sep = " ")) %>% 
+  left_join(metadata) %>% filter(!is.na(`Unit length`))
+
+ggplot(age) + geom_point(aes(x = log(Metabolic.rate..W.), y = `Unit length`, color = group)) + coord_cartesian(ylim = c(0, 60000)) + scale_color_manual(values = colours) + theme_bw()
+#doesnt seem to much/anything of significance here
+
+
+
+age <- read.csv("zc4688/honours/metadata/observations.csv")
+age %>% group_by(species) %>% summarise(brain = max(`brain size`), mass = max(`body mass`)) %>% left_join(metadata %>% rename("species" = "Species")) %>% filter(!is.na(Unit.length)) %>% ggplot(aes(x = log(mass), y = Unit.length)) + geom_point(aes(color = group))
 ################################Conservation
 
 eighteen <- readDNAMultipleAlignment("zc4688/honours/analyses/chordates/new/msa/fiveeight_clusters/cleaned.alignment.txt")
@@ -1034,13 +1129,15 @@ treenames <- treenames %>%
 
 treenames <- treenames %>% left_join(classifications %>% select(`Sample ID`, Species))
 
-eighteentree$tip.label <- as.character(treenames$label)
+eighteentree$tip.label <- as.character(treenames$Species)
 common_organisms <- intersect(plotdata$label, eighteentree$tip.label)
 
 eighteentree <- ape::drop.tip(eighteentree, setdiff(eighteentree$tip.label, common_organisms))
-eighteentree$edge.length <- NULL
+#eighteentree$edge.length <- NULL
 #eighteentree$tip.label <- str_replace_all(tree$tip.label, "_", " ")
+eighteentree <- root(eighteentree, outgroup = c("Branchiostoma lanceolatum", "B. floridae x B. belcheri", "B. floridae x B. japonicum"), resolve.root = T)
 
+eighteentree <- ladderize(eighteentree)
 
 tmp <- plotdata %>% select(label, group)
 
@@ -1049,6 +1146,16 @@ ggtree(eighteentree) %<+% classifications +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group") +
   coord_cartesian(clip = 'off') 
+
+ggsave("zc4688/honours/analyses/chordates/figures/eighteentree_branches.pdf", height = 20, width = 15)
+
+eighteentree$edge.length <- NULL
+ggtree(eighteentree) %<+% classifications +
+  geom_tiplab(size=1) +
+  geom_tippoint(aes(color = group), size = 1.5) +
+  scale_color_manual(values = colours, name = "Taxonomic Group") +
+  coord_cartesian(clip = 'off') 
+ggsave("zc4688/honours/analyses/chordates/figures/eighteentree.pdf", height = 20, width = 15)
 
 ################################
 
@@ -1062,9 +1169,7 @@ x <- A %>% as.data.frame(.)  %>% dplyr::rename("Species" = "V1") %>% left_join(c
 x$color <- colours[x$group]
 
 tree <- ladderize(tree)
-eighteentree <- root(eighteentree, outgroup = c("Branchiostoma lanceolatum", "B. floridae x B. belcheri", "B. floridae x B. japonicum"), resolve.root = T)
 
-eighteentree <- ladderize(eighteentree)
 
 dist.topo(tree, eighteentree)
 comparePhylo(tree, eighteentree, plot = TRUE)
@@ -1079,7 +1184,7 @@ newtr2 <- rotateConstr(eighteentree, co)
 
 ############################################ Motif results
 
-tmp <-  read.table("zc4688/honours/analyses/chordates/motif/its1_remasked/meme.txt", sep = ",") %>% 
+tmp <-  read.table("zc4688/honours/analyses/chordates/motif/igs/meme.txt", sep = ",") %>% 
       dplyr::rename(raw = V1)
 
 
@@ -1141,7 +1246,7 @@ motif1 <- df.motif %>% filter(motif.num %in% c("Motif.1", "Motif.2", "Motif.3", 
   dplyr::rename("label" = "Species") %>% 
   relocate(label, .before = everything()) %>% 
   filter(label %in% common_organisms) %>% 
-  left_join(boxplots %>% select(`Sample ID`, ITS1))
+  left_join(structuremetadata %>% select(`Sample ID`, `28S_rRNA_End`, IGS_length))
 
 
 #look at no.1 motif
@@ -1159,29 +1264,29 @@ motif1 <- df.motif %>% filter(motif.num %in% c("Motif.3")) %>%
 
 #all motifs and no.
 motif1 <- df.motif  %>% 
-  filter(motif.num %in% c("Motif.1", "Motif.2", "Motif.3", "Motif.4", "Motif.5", "Motif.6", "Motif.7", "Motif.8")) %>% 
+  #filter(motif.num %in% c("Motif.1", "Motif.2", "Motif.3", "Motif.4", "Motif.5", "Motif.6", "Motif.7", "Motif.8")) %>% 
   #filter(motif.num %in% c("Motif.9", "Motif.10", "Motif.11", "Motif.12", "Motif.13", "Motif.14", "Motif.15", "Motif.16")) %>% 
   mutate(`Sample ID` = str_extract(input.seq.name, "^GCA_\\d+|^GCF_\\d+")) %>% 
   left_join(classifications) %>% 
   dplyr::rename("label" = "Species") %>% 
   relocate(label, .before = everything()) %>% 
   filter(label %in% common_organisms) %>% 
-  left_join(boxplots %>% select(`Sample ID`, ITS1, ITS2)) %>% 
+  left_join(boxplots %>% select(`Sample ID`, ITS1, ITS2, IGS_length)) %>% 
   group_by(`Sample ID`, motif.num) %>% 
   mutate(number = n()) %>%
   ungroup()
   
-p <- ggtree(tree) %<+% classifications +
+p <- ggtree(mammaltree) %<+% classifications +
   geom_tiplab(size=1) +
   geom_tippoint(aes(color = group), size = 1.5) +
   scale_color_manual(values = colours, name = "Taxonomic Group") 
   
 #for first 2  
-its1 <- motif1 %>% select(label, ITS2, number, group) %>% unique
+its1 <- motif1 %>% select(label, IGS_length, number, group) %>% unique
 p <- p + new_scale_color() + 
   geom_facet(
     data = its1,
-    mapping = aes(x = ITS2),
+    mapping = aes(x = IGS_length),
     geom = geom_col,
     color = "grey",
     panel = "Motif",
@@ -1210,38 +1315,67 @@ p
 
 
 #for last
-its1 <- motif1 %>% select(label, ITS2, motif.num, number, group) %>% unique
-
+its1 <- motif1 %>% select(label, IGS_length, motif.num, number, group) %>% unique
+p <- ggtree(mammaltree) %<+% classifications +
+  geom_tiplab(size=1) +
+  geom_tippoint(aes(color = group), size = 1.5) +
+  scale_color_manual(values = colours, name = "Taxonomic Group") 
 p <- p + new_scale_color() + 
   geom_facet(
-    data = its1 %>% select(label, ITS2) %>% unique,
-    mapping = aes(x = ITS2),
+    data = its1 %>% select(label, IGS_length) %>% unique,
+    mapping = aes(x = IGS_length),
     geom = geom_col,
     color = "grey",
     panel = "Motif",
     size = 2 
   ) + geom_facet(
     data = motif1,
-    mapping = aes(x = as.numeric(input.seq.pos), xend = as.numeric(input.seq.pos) + 50, color = motif.num),
+    mapping = aes(x = as.numeric(input.seq.pos), xend = as.numeric(input.seq.pos) + 500, color = motif.num),
     geom = geom_segment,       # Horizontal bar chart
     panel = "Motif",
     size = 1 
-  )     + 
-  geom_facet(
-    data = its1,
-    mapping = aes(x = number, color = motif.num),
-    geom = geom_col,
-    panel = "Number of motifs",
-    size = 2 
-  )  +
+  )     +
     scale_y_discrete() +  scale_color_brewer(palette = "Dark2", name = "Motif name") +
     theme_tree2() + xlim_expand(c(0, 40), "Tree") +
     labs(fill = "Taxonomic Group") +coord_cartesian(clip = 'off') 
   
 p
 
-  
-  
+test <- motif1 %>% filter(motif.num == "Motif.5")  
+its1 <- test %>% select(label, IGS_length, motif.num, number, group) %>% unique
+
+p <- ggtree(tree) %<+% classifications +
+  geom_tiplab(size=1) +
+  geom_tippoint(aes(color = group), size = 1.5) +
+  scale_color_manual(values = colours, name = "Taxonomic Group") 
+p <- p + new_scale_color() + 
+  geom_facet(
+    data = its1 %>% select(label, IGS_length) %>% unique,
+    mapping = aes(x = IGS_length),
+    geom = geom_col,
+    color = "grey",
+    panel = "Motif",
+    size = 2 
+  ) + geom_facet(
+    data = test,
+    mapping = aes(x = as.numeric(input.seq.pos), xend = as.numeric(input.seq.pos) + 500, color = motif.num),
+    geom = geom_segment,       # Horizontal bar chart
+    panel = "Motif",
+    size = 1 
+  )     +
+  geom_facet(
+    data = its1,
+    mapping = aes(x = number, color = motif.num, fill = motif.num),
+    geom = geom_col,
+    panel = "Number of motifs",
+    size = 2 
+  )  +
+  scale_y_discrete() +  scale_color_brewer(palette = "Dark2", name = "Motif name") +
+  theme_tree2() + xlim_expand(c(0, 40), "Tree") +
+  labs(fill = "Taxonomic Group") +coord_cartesian(clip = 'off') 
+
+p
+
 ggsave("zc4688/honours/analyses/chordates/figures/its2_motifs1-8.pdf", height = 20, width = 15)
 
 
