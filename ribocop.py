@@ -215,68 +215,83 @@ def process_hmm_alignments(data_df, sampleid, log_file, output_dir):
 
     return filtered_data_df
 
-def find_last_gap_envend(i, df, variable):
-    if df.at[i, "type"] != "separate":
-        return df.at[i, variable]
 
-    j = i + 1
-    new_value = df.at[i, variable]  # default fallback
-
-    # Look forward for contiguous "gap" rows
-    while j < len(df) and df.at[j, "type"] == "gap":
-        new_value = df.at[j, variable]
-        j += 1
-
-    return new_value
 
 def combine_broken_alignments(df, sampleid, log_file):
-    #sort out -ve strand
-    reset_dfs = []
     total_gaps = 0
+    reset_dfs = []
+
     for combo, group in df.groupby(["seqid", "Type", "Strand"], group_keys=False):
         group = group.sort_values(by = ["Envstart"]).reset_index(drop=True)
-        
+            
         if (group["Strand"] == "+").all(): 
-            group["query_gap"] = group["Envstart"] - group["Envend"].shift(fill_value=group["Envstart"].iloc[0])
-            group["ref_gap"] = group["HMMbegin"] - group["HMMend"].shift(fill_value=group["HMMbegin"].iloc[0])
+            group["query_gap"] = group["Envstart"].shift(-1) - group["Envend"]
+            group["ref_gap"] = group["HMMbegin"].shift(-1) - group["HMMend"]
 
-            conditions = [(group["ref_gap"] < -100), (group["query_gap"] > 2000), (group["ref_gap"] == 0) & (group["query_gap"] == 0)]
-            choices = ["separate", "separate", "single"]
+            #print(group)
+            conditions = [(group["ref_gap"] < -100), (group["query_gap"] > 2000), pd.isna(group["ref_gap"])]
+            choices = ["separate", "separate", "separate"]
 
-        
-            group["type"] = np.select(conditions, choices, default="gap")
-            total_gaps += (group["type"] == "gap").sum()
-            group["merged_envend"] = [find_last_gap_envend(i, group, "Envend") for i in range(len(group))]
-            group["merged_hmmend"] = [find_last_gap_envend(i, group, "HMMend") for i in range(len(group))]
-            group = group[group["type"] != "gap"]
-            group.loc[:, "Envend"] = group["merged_envend"]
-            group.loc[:, "HMMend"] = group["merged_hmmend"]
-            group = group[["seqid", "Target accession", "Type", "Query accession", "HMMbegin", "HMMend", "Alignstart", "Alignend", "Envstart","Envend", "Target length", "Strand", "Evalue", "Score", "Bias", "Description", "% HMM", "% Target"]]
+            
+            group["type"] = np.select(conditions, choices, default="merge")
+            
+            
+            group["merged_envstart"] = group["Envstart"]
+            group["merged_hmmstart"] = group["HMMbegin"]
 
-            reset_dfs.append(group)
-        
-        else:
-            group["query_gap"] = group["Envstart"] - group["Envend"].shift(fill_value=group["Envstart"].iloc[0])
-            group["ref_gap"] = group["HMMbegin"].shift(fill_value=group["HMMbegin"].iloc[0]) - group["HMMend"]
+            # Propagate the end coordinates across "merge" blocks
+            for i in range(len(group) - 1):
+                if group.at[i, "type"] == "merge":
+                    group.at[i+1, "merged_envstart"] = group.at[i, "merged_envstart"]
+                    group.at[i+1, "merged_hmmstart"] = group.at[i, "merged_hmmstart"]
 
-            conditions = [(group["ref_gap"] < -100), (group["query_gap"] > 2000), (group["ref_gap"] == 0) & (group["query_gap"] == 0)]
-            choices = ["separate", "separate", "single"]
+            total_gaps += (group["type"] == "merge").sum()
 
-        
-            group["type"] = np.select(conditions, choices, default="gap")
-            total_gaps += (group["type"] == "gap").sum()
-            group["merged_envend"] = [find_last_gap_envend(i, group, "Envend") for i in range(len(group))]
-            group["merged_hmmstart"] = [find_last_gap_envend(i, group, "HMMbegin") for i in range(len(group))]
-            group = group[group["type"] != "gap"]
-            group.loc[:, "Envend"] = group["merged_envend"]
+            group = group[group["type"] != "merge"]
+            
+            group.loc[:, "Envstart"] = group["merged_envstart"]
             group.loc[:, "HMMbegin"] = group["merged_hmmstart"]
+            #print(group)
             group = group[["seqid", "Target accession", "Type", "Query accession", "HMMbegin", "HMMend", "Alignstart", "Alignend", "Envstart","Envend", "Target length", "Strand", "Evalue", "Score", "Bias", "Description", "% HMM", "% Target"]]
 
             reset_dfs.append(group)
+            
+        else:
+            group["query_gap"] = group["Envstart"].shift(-1) - group["Envend"]
+            group["ref_gap"] = group["HMMbegin"] - group["HMMend"].shift(-1)
+
+            #print(group)
+            conditions = [(group["ref_gap"] < -100), (group["query_gap"] > 2000), pd.isna(group["ref_gap"])]
+            choices = ["separate", "separate", "separate"]
+
+            
+            group["type"] = np.select(conditions, choices, default="merge")
+            
+            
+            group["merged_envstart"] = group["Envstart"]
+            group["merged_hmmend"] = group["HMMend"]
+
+            # Propagate the end coordinates across "merge" blocks
+            for i in range(len(group) - 1):
+                if group.at[i, "type"] == "merge":
+                    group.at[i+1, "merged_envstart"] = group.at[i, "merged_envstart"]
+                    group.at[i+1, "merged_hmmend"] = group.at[i, "HMMend"]
+
+            total_gaps += (group["type"] == "merge").sum()
+
+            group = group[group["type"] != "merge"]
+            
+            
+            group.loc[:, "Envstart"] = group["merged_envstart"]
+            group.loc[:, "HMMend"] = group["merged_hmmend"]
+
+            group = group[["seqid", "Target accession", "Type", "Query accession", "HMMbegin", "HMMend", "Alignstart", "Alignend", "Envstart","Envend", "Target length", "Strand", "Evalue", "Score", "Bias", "Description", "% HMM", "% Target"]]
+
+            reset_dfs.append(group)
+
     reset_df = pd.concat(reset_dfs, ignore_index=True)
     print(f"{total_gaps} merged for {sampleid}")
     update_log("rDNA_details", "Number of broken alignments", int(total_gaps), log_file)
-    
     return reset_df
 
 def morph_identification(filtered_data_df, log_file, sampleid):
