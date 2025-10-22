@@ -7,7 +7,6 @@ import subprocess
 import sys
 import numpy as np
 import gzip
-import tarfile
 import json
 import glob
 import re
@@ -575,7 +574,9 @@ def process_paf(sampleid, output_dir, log_file):
     update_log("rDNA_details", "Number of rDNA arrays", int(result.shape[0]), log_file)
     update_log("rDNA_details", "Median contig length", int(median_contig_length), log_file)
 
-    result.to_csv(outputfile, sep='\t', index=False, header=False)
+    bed_result = result[["Query sequence name", "Query start", "Query end"]]
+
+    bed_result.to_csv(outputfile, sep='\t', index=False, header=False)
 
 
 
@@ -644,10 +645,10 @@ def main():
             sys.exit(f"Error: Specified input FASTA file does not exist: {inputfasta}")
     else:
         fasta_candidates = (
-        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fna") + 
-        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fna.gz")+ 
-        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fa") + 
-        glob.glob(f"{args.input_dir}/*/{args.sampleid}*.fasta")
+        glob.glob(f"{args.input_dir}/**/{args.sampleid}*.fna") + 
+        glob.glob(f"{args.input_dir}/**/{args.sampleid}*.fna.gz")+ 
+        glob.glob(f"{args.input_dir}/**/{args.sampleid}*.fa") + 
+        glob.glob(f"{args.input_dir}/**/{args.sampleid}*.fasta")
         )
         if not fasta_candidates:
             sys.exit(f"Error: No FASTA file found matching sample ID {args.sampleid} in {args.input_dir}")
